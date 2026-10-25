@@ -1,0 +1,39 @@
+{
+  "name": "@bitosome/ha-card-ui",
+  "version": "1.0.0",
+  "description": "Shared build-time components and interaction controllers for bitosome Home Assistant cards and panels",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bitosome/ha-card-ui.git"
+  },
+  "peerDependencies": {
+    "lit": "^2.0.0 || ^3.0.0"
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.4",
+    "lit": "3.3.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "package": "@bitosome/ha-card-ui",
+  "distribution": "Pinned GitHub Release tarball, bundled at build time",
+  "consumers": [
+    {
+      "checkout": "space-hub-card-editor-navigation",
+      "repository": "bitosome/space-hub-card",
+      "interaction": "Tiles and native HA more-info; canonical activation glow"
+    },
+    {
+      "checkout": "real-electricity-price-card",
+      "repository": "bitosome/real-electricity-price-card",
+      "interaction": "Chart and native HA more-info"
+    },
+    {
+      "checkout": "smartevse-dual-charger-card",
+      "repository": "bitosome/smartevse-dual-charger-card",
+      "interaction": "Plan/settings/details modal flow"
+    },
+    {
+      "checkout": "currnet-monitor-card",
+      "repository": "bitosome/currnet-monitor-card",
+      "interaction": "Phase -> note modal flow"
+    },
+    {
+      "checkout": "advanced-camera-card",
+      "repository": "bitosome/camera-card",
+      "interaction": "Media controls; playback remains in its media surface"
+    },
+    {
+      "checkout": "robot-vacuum-cleaner-card",
+      "repository": "bitosome/robot-vacuum-cleaner-card",
+      "interaction": "Utilities modal; room planning intentionally inline"
+    },
+    {
+      "checkout": "nibe-dashboard",
+      "repository": "bitosome/nibe-dashboard",
+      "interaction": "Settings/history/details/hot-water modal flow"
+    },
+    {
+      "checkout": "volvo-cars-card",
+      "repository": "bitosome/volvo-cars-card",
+      "interaction": "Details/climate/unlock modal flow"
+    },
+    {
+      "checkout": "coffee-tracker",
+      "repository": "bitosome/coffee-tracker",
+      "interaction": "Settings/ledger operations modal flow; activity disclosure"
+    },
+    {
+      "checkout": "vallox-autopilot",
+      "repository": "bitosome/vallox-autopilot",
+      "interaction": "Settings/curve/history/details modal flow"
+    },
+    {
+      "checkout": "budget",
+      "repository": "bitosome/budget-manager",
+      "interaction": "Full panel with shared guarded modal flows"
+    }
+  ]
+}
