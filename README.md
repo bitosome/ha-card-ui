@@ -39,6 +39,14 @@ Details and History open the common dialog. Child pages use `push`, Back pops
 one page, and X/Escape/backdrop requests closing the whole flow. A confirmation
 is part of the same dialog; Escape from it returns to editing.
 
+Settings launchers use `UI_ICONS.settings` (`mdi:cog-outline`), details use
+`UI_ICONS.details`, and history uses `UI_ICONS.history`. A launcher is a button
+with `aria-haspopup="dialog"`, an explicit contextual name and at least a 44px
+tap target. Pass its `event.currentTarget` to `flow.open` so closing also returns
+focus correctly after a touch tap. Do not label dialog launchers as tabs or
+use `aria-expanded` as if they expanded inline content. A pencil edits a named
+record; a chevron indicates navigation/disclosure, not a replacement settings icon.
+
 ```ts
 private flow = new FamilyFlowController<'settings' | 'price'>(this, {
   guard: (intent, route) => ({
@@ -70,10 +78,16 @@ these callbacks automatically. Mark a preferred input or safe Cancel button
 `data-family-initial-focus`; otherwise route changes focus the heading. Telemetry
 updates do not reset focus or caret position.
 
-Inline exceptions are intentional: robot room selection, per-room settings,
-native HA sorting, shared autosave, active-queue Apply/Cancel; small activity
-disclosures; chart point selection; media playback. This library does not add
-modals merely to make different domains look identical.
+Robot room defaults and per-room settings use the same modal flow. Room toggles,
+order, selected-setting pills and active-queue Apply/Cancel remain on the main
+card. Moving an editor into a modal does not change its persistence contract:
+shared autosave remains shared autosave, and an explicit save remains explicit.
+Opening or closing settings must never dispatch a device command.
+
+Inline exceptions are intentional: room selection and native HA sorting; small
+activity disclosures; chart point selection; media playback. HA-owned card
+configuration and entity more-info stay inside their native Home Assistant UI;
+never put another custom modal around that existing editor or dialog.
 
 ## Activation glow
 

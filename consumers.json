@@ -30,7 +30,7 @@
     {
       "checkout": "robot-vacuum-cleaner-card",
       "repository": "bitosome/robot-vacuum-cleaner-card",
-      "interaction": "Utilities modal; room planning intentionally inline"
+      "interaction": "Utilities and room-settings modal flow; room order, selection and setting summaries inline"
     },
     {
       "checkout": "nibe-dashboard",
