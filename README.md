@@ -109,7 +109,12 @@ Never add `isolation`, `transform`, `filter`, partial `opacity`, non-auto
 intermediate layout groups. The glow and every neighboring face must participate
 in the same context. Do not add a colored glow shadow to a foreground face.
 Do not fix overlap by clipping the tile group: that removes the glow in gaps
-and can clip keyboard focus.
+and can clip keyboard focus. Bound the **outer dashboard card** with
+`overflow: clip` so its halo cannot paint over independent neighboring cards.
+Keep enough outer padding for focus rings (at least outline width plus offset);
+do not clip individual tiles, wrappers or grids. Custom dialogs must use native
+`showModal()` so they enter the top layer and remain outside this clipping.
+Check artwork, focus, and dialog bounds at mobile sizes after adding the boundary.
 
 Verify real browser painting with active first and last tiles, simultaneous
 active tiles, preceding and following panels, and light/dark themes. Compare
