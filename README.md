@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.0.0/bitosome-ha-card-ui-1.0.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.0.1/bitosome-ha-card-ui-1.0.1.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -92,9 +92,30 @@ never put another custom modal around that existing editor or dialog.
 ## Activation glow
 
 `buildGlow(colors, mode, active)` is extracted from Space Hub's original helper.
-Use a `.family-tile-group` isolated group with `.family-tile-wrap` wrappers,
-`tileGlow(...)` at z-index 0 and `.family-tile-face` at z-index 1. Never isolate or
-transform individual wrappers: every glow must stay below every sibling face.
+Place `.family-tile-group` on the common ancestor of **all adjacent surfaces**,
+including headers, notices, metric grids, list panels and embedded cards. A grid
+inside that scope is ordinary layout; do not isolate it again. An isolated grid
+can paint its entire glow above a following panel even when each of its own
+tile faces is correctly layered.
+
+Use `.family-tile-wrap` wrappers, `tileGlow(...)` at z-index 0 and
+`.family-tile-face` (or `.family-surface`) at z-index 1. Shared notices are also
+foreground surfaces. Give custom neighboring panels the same foreground layer
+and an opaque theme surface so light remains visible in gaps, never over their
+contents. A transparent surface intentionally reveals what is behind it.
+
+Never add `isolation`, `transform`, `filter`, partial `opacity`, non-auto
+`z-index` or other stacking-context properties to individual wrappers or
+intermediate layout groups. The glow and every neighboring face must participate
+in the same context. Do not add a colored glow shadow to a foreground face.
+Do not fix overlap by clipping the tile group: that removes the glow in gaps
+and can clip keyboard focus.
+
+Verify real browser painting with active first and last tiles, simultaneous
+active tiles, preceding and following panels, and light/dark themes. Compare
+glow-on and glow-off screenshots: neighboring opaque surface interiors should
+be unchanged, while the gaps retain the halo. CSS contract tests alone cannot
+verify browser paint order.
 Idle is normally quiet. Domain code chooses genuine activation and semantic
 colors. Reduced-motion users get a static indication. User-configured colors and
 existing Space Hub state semantics remain authoritative.

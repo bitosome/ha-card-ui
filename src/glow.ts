@@ -27,7 +27,7 @@ export function buildGlow(
   };
 }
 
-/** Apply to a shared isolated group, never give individual wrappers stacking contexts. */
+/** Isolate the common ancestor of every adjacent surface, not nested tile subgroups. */
 export const glowStyles = css`
   .family-tile-group {
     isolation: isolate;

@@ -26,6 +26,8 @@ const {
   renderFamilyDialog,
   buildGlow,
   glowStyles,
+  componentStyles,
+  familyStyles,
   actionPill,
   stateChip,
   metricTile,
@@ -344,4 +346,38 @@ test("shared actions prevent duplicate pending clicks and chips escape labels", 
   assert.equal(node.querySelector("button").disabled, true);
   assert.equal(node.querySelector("script"), null);
   assert.match(node.textContent, /Unavailable/);
+});
+
+test("glow scope keeps wrappers neutral and every shared surface above the underlayer", () => {
+  const style = document.createElement("style");
+  style.textContent = `${familyStyles.cssText} ${componentStyles.cssText} ${glowStyles.cssText}`;
+  document.head.append(style);
+  const scope = document.createElement("main");
+  scope.className = "family-tile-group";
+  scope.innerHTML = `<div class="family-notice">Preceding notice</div>
+    <section class="layout-grid"><div class="family-tile-wrap">
+      <div class="glow-under"></div><div class="family-tile-face">Active tile</div>
+    </div></section><article class="family-surface">Following panel</article>`;
+  document.body.append(scope);
+  try {
+    const computed = (selector) => window.getComputedStyle(scope.querySelector(selector));
+    assert.equal(window.getComputedStyle(scope).isolation, "isolate");
+    for (const selector of [".layout-grid", ".family-tile-wrap"]) {
+      const styles = computed(selector);
+      assert.ok(["", "auto"].includes(styles.zIndex));
+      assert.ok(["", "auto"].includes(styles.isolation));
+      assert.ok(["", "none"].includes(styles.transform));
+      assert.ok(["", "none"].includes(styles.filter));
+      assert.ok(["", "1"].includes(styles.opacity));
+    }
+    assert.equal(computed(".glow-under").zIndex, "0");
+    assert.equal(computed(".glow-under").pointerEvents, "none");
+    for (const selector of [".family-notice", ".family-tile-face", ".family-surface"]) {
+      assert.equal(computed(selector).position, "relative");
+      assert.equal(computed(selector).zIndex, "1");
+    }
+  } finally {
+    scope.remove();
+    style.remove();
+  }
 });
