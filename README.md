@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.0.1/bitosome-ha-card-ui-1.0.1.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.1.0/bitosome-ha-card-ui-1.1.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -88,6 +88,49 @@ Inline exceptions are intentional: room selection and native HA sorting; small
 activity disclosures; chart point selection; media playback. HA-owned card
 configuration and entity more-info stay inside their native Home Assistant UI;
 never put another custom modal around that existing editor or dialog.
+
+## Camera and media interactions
+
+`MediaZoomController` reuses Camera Card's local 1–5× pinch zoom and bounded pan.
+It never issues PTZ or other device commands. Supply a Lit host (or an object with
+`requestUpdate()`) and `{ enabled: () => expanded }`. Bind `touchStart`, `touchMove`
+and `touchEnd` to the viewport's touch events; also bind `touchEnd` to `touchcancel`.
+The callbacks carry `passive: false` for Lit; imperative listeners must supply
+`{ passive: false }`. Call `consumeClick(event)` in a capture-phase click listener
+before playback actions to suppress the click synthesized after a gesture.
+
+Apply `zoom.transform` only to the media surface, with a centered transform origin.
+Keep controls outside that transformed surface and clip the viewport. Use
+`touch-action: none` only while expanded; normal dashboard scrolling remains
+available inline. Buttons, links, form fields and `[data-media-control]` elements
+are excluded from gestures. Display a reset control when `zoom.state.scale > 1`.
+Call `reset()` when the source or expanded state changes. Lit teardown resets
+automatically; imperative users call `dispose()`. The pure `initialZoom`,
+`moveZoom`, `clampZoom`, `ZoomPoint` and `ZoomState` APIs are also exported.
+
+`ensureCameraStreamElements(entityId, tag, { timeoutMs? })` asks HA's card helpers
+to import the actual requested `ha-camera-stream` or `ha-web-rtc-player`. It shares
+concurrent loads, times out after ten seconds by default and permits retries after
+failure. Consumers still own loading/error UI and must ignore async results after
+disconnect or a configuration change. No HACS runtime dependency or global custom
+element is installed by this library.
+
+`toggleMediaFullscreen(api, target)` enters or exits fullscreen only for that
+target and verifies real entry. `false` means unsupported, rejected or no actual
+transition; use the shared top-layer media dialog fallback. Do not replace another
+element's fullscreen or open a fallback over an unsuccessful exit while the target
+is still fullscreen. `isMediaFullscreen(api, target)` reports actual ownership.
+Use `createMediaFullscreenAPI(document)` for standard/WebKit native methods and
+nested shadow-root ownership, or pass a compatible `screenfull` adapter. Consumers
+own fullscreen-change listeners, safe-area controls, X/Escape/focus restoration and
+ensuring only one active stream exists when moving into a fallback dialog.
+
+For an expanded media fallback, compose `mediaDialogStyles` after the ordinary
+`dialogStyles`, pass `className: "media"` to `renderFamilyDialog` and wrap the media
+in `.family-media-content`. This additive variant uses the shell's available safe
+area width and height, removes body padding and retains its ordinary title/X header.
+The media frame should fill that wrapper with `object-fit: contain`; do not apply
+the variant to Settings, Details or ordinary content dialogs.
 
 ## Activation glow
 
