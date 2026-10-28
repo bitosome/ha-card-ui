@@ -53,6 +53,11 @@
       "interaction": "Settings/curve/history/details modal flow"
     },
     {
+      "checkout": "3d-printer-card",
+      "repository": "bitosome/3d-printer-card",
+      "interaction": "Read-only printer status, AMS, camera and shared history/details/preview modal flows"
+    },
+    {
       "checkout": "budget",
       "repository": "bitosome/budget-manager",
       "interaction": "Full panel with shared guarded modal flows"
