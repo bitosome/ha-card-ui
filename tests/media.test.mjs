@@ -6,6 +6,8 @@ import {
   clampZoom,
   moveZoom,
   MediaZoomController,
+  MediaFullscreenFallbackController,
+  mediaFullscreenStyles,
   ensureCameraStreamElements,
   createMediaFullscreenAPI,
   isMediaFullscreen,
@@ -404,4 +406,165 @@ test("native adapter supports prefixed WebKit methods without changing unrelated
     assert.equal(api.element, target);
     assert.equal(await toggleMediaFullscreen(api, target), true);
     assert.equal(api.isFullscreen, false);
+  }));
+
+test("in-place expansion retains the player and restores styles, focus and scrolling", async () =>
+  withWindow(async (win) => {
+    const doc = win.document;
+    const target = doc.createElement("section");
+    const player = doc.createElement("ha-camera-stream");
+    const opener = doc.createElement("button");
+    target.append(player, opener);
+    doc.body.append(target);
+    opener.focus();
+    doc.documentElement.style.setProperty("overflow", "clip", "important");
+    doc.body.style.overflow = "auto";
+    let opens = 0,
+      hides = 0;
+    target.showPopover = () => {
+      opens++;
+    };
+    target.hidePopover = () => {
+      hides++;
+    };
+    const changes = [];
+    const controller = new MediaFullscreenFallbackController(
+      { requestUpdate() {} },
+      { onChange: (active) => changes.push(active) },
+    );
+    controller.open(target, opener);
+    assert.equal(controller.active, true);
+    assert.equal(target.parentNode, doc.body);
+    assert.equal(target.querySelector("ha-camera-stream"), player);
+    assert.equal(target.getAttribute("popover"), "manual");
+    assert.ok(target.hasAttribute("data-media-fullscreen"));
+    assert.equal(doc.querySelector("dialog"), null);
+    assert.equal(doc.documentElement.style.overflow, "hidden");
+    controller.close();
+    assert.equal(controller.active, false);
+    assert.equal(target.hasAttribute("popover"), false);
+    assert.equal(target.hasAttribute("tabindex"), false);
+    assert.equal(target.hasAttribute("data-media-fullscreen"), false);
+    assert.equal(doc.documentElement.style.overflow, "clip");
+    assert.equal(
+      doc.documentElement.style.getPropertyPriority("overflow"),
+      "important",
+    );
+    assert.equal(doc.body.style.overflow, "auto");
+    assert.equal(doc.activeElement, opener);
+    assert.equal(opens, 1);
+    assert.equal(hides, 1);
+    assert.deepEqual(changes, [true, false]);
+    assert.match(
+      mediaFullscreenStyles.cssText,
+      /:host\(\[data-media-fullscreen\]\)/,
+    );
+    assert.match(mediaFullscreenStyles.cssText, /height: 100dvh/);
+  }));
+
+test("fallback still works if popover is unsupported or rejected", async () =>
+  withWindow(async (win) => {
+    const target = win.document.createElement("div");
+    win.document.body.append(target);
+    const controller = new MediaFullscreenFallbackController({
+      requestUpdate() {},
+    });
+    target.showPopover = undefined;
+    controller.open(target);
+    assert.equal(controller.active, true);
+    assert.equal(target.hasAttribute("popover"), false);
+    controller.close();
+    target.showPopover = () => {
+      throw new Error("Unsupported");
+    };
+    controller.open(target);
+    assert.equal(controller.active, true);
+    assert.equal(target.hasAttribute("popover"), false);
+    controller.hostDisconnected();
+    assert.equal(controller.active, false);
+    assert.equal(win.document.documentElement.style.overflow, "");
+  }));
+
+test("nested consumers share scrolling ownership and Escape closes only the top view", async () =>
+  withWindow(async (win) => {
+    const targets = [
+      win.document.createElement("div"),
+      win.document.createElement("div"),
+    ];
+    win.document.body.append(...targets);
+    targets.forEach((target) => {
+      target.showPopover = undefined;
+    });
+    const first = new MediaFullscreenFallbackController({ requestUpdate() {} });
+    const second = new MediaFullscreenFallbackController({
+      requestUpdate() {},
+    });
+    first.open(targets[0]);
+    second.open(targets[1]);
+    const escape = new win.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    win.document.dispatchEvent(escape);
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(first.active, true);
+    assert.equal(second.active, false);
+    assert.equal(win.document.documentElement.style.overflow, "hidden");
+    first.hostDisconnected();
+    assert.equal(win.document.documentElement.style.overflow, "");
+    assert.equal(win.document.body.style.overflow, "");
+  }));
+
+test("Tab stays in expanded shadow-root controls and disconnect restores background styles", async () =>
+  withWindow(async (win) => {
+    const doc = win.document;
+    const target = doc.createElement("div");
+    target.showPopover = undefined;
+    const root = target.attachShadow({ mode: "open" });
+    const one = doc.createElement("button"),
+      two = doc.createElement("button"),
+      disabled = doc.createElement("button");
+    disabled.disabled = true;
+    root.append(one, disabled, two);
+    doc.body.append(target);
+    const controller = new MediaFullscreenFallbackController({
+      requestUpdate() {},
+    });
+    controller.open(target, one);
+    const tab = (shiftKey = false) =>
+      doc.dispatchEvent(
+        new win.KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey,
+          cancelable: true,
+        }),
+      );
+    assert.equal(root.activeElement, one);
+    tab();
+    assert.equal(root.activeElement, two);
+    tab();
+    assert.equal(root.activeElement, one);
+    tab(true);
+    assert.equal(root.activeElement, two);
+    target.remove();
+    controller.hostDisconnected();
+    assert.equal(controller.active, false);
+    assert.equal(doc.body.style.overflow, "");
+  }));
+
+
+test("removing the expanded frame without disconnecting its host releases viewport ownership", async () =>
+  withWindow(async (win) => {
+    const target = win.document.createElement("div");
+    target.showPopover = undefined;
+    win.document.body.append(target);
+    const controller = new MediaFullscreenFallbackController({ requestUpdate() {} });
+    controller.open(target);
+    target.remove();
+    controller.hostUpdated();
+    assert.equal(controller.active, false);
+    assert.equal(target.hasAttribute("data-media-fullscreen"), false);
+    assert.equal(win.document.documentElement.style.overflow, "");
+    assert.equal(win.document.body.style.overflow, "");
   }));

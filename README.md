@@ -117,20 +117,28 @@ element is installed by this library.
 
 `toggleMediaFullscreen(api, target)` enters or exits fullscreen only for that
 target and verifies real entry. `false` means unsupported, rejected or no actual
-transition; use the shared top-layer media dialog fallback. Do not replace another
+transition; use `MediaFullscreenFallbackController` for the in-place viewport fallback. Do not replace another
 element's fullscreen or open a fallback over an unsuccessful exit while the target
 is still fullscreen. `isMediaFullscreen(api, target)` reports actual ownership.
 Use `createMediaFullscreenAPI(document)` for standard/WebKit native methods and
 nested shadow-root ownership, or pass a compatible `screenfull` adapter. Consumers
-own fullscreen-change listeners, safe-area controls, X/Escape/focus restoration and
-ensuring only one active stream exists when moving into a fallback dialog.
+own native fullscreen-change listeners and safe-area controls. The fallback
+controller below owns Escape, focus restoration and the existing player lifetime.
 
-For an expanded media fallback, compose `mediaDialogStyles` after the ordinary
-`dialogStyles`, pass `className: "media"` to `renderFamilyDialog` and wrap the media
-in `.family-media-content`. This additive variant uses the shell's available safe
-area width and height, removes body padding and retains its ordinary title/X header.
-The media frame should fill that wrapper with `object-fit: contain`; do not apply
-the variant to Settings, Details or ordinary content dialogs.
+For fullscreen media, compose `mediaFullscreenStyles` and create
+`new MediaFullscreenFallbackController(host, { onChange(active) { … } })`.
+After the native attempt fails without another fullscreen owner, call
+`open(existingFrame, opener)`. The original player remains mounted: supported
+browsers promote the frame using a manual Popover top layer, with a fixed viewport
+fallback on older engines. This is an immersive stream with no dialog header.
+Call `close()` from the same fullscreen button; Escape exits too. The controller
+contains keyboard focus, restores the opener, cooperates across independently
+bundled cards when locking page scrolling, and cleans up on host disconnection.
+Its `active` getter can enable zoom and the fullscreen-exit icon. It marks the
+frame with `data-media-fullscreen`; use `object-fit: contain` while expanded.
+Keep safe-area padding on controls inside the frame. `mediaDialogStyles` remains
+available for existing general-purpose media dialogs, but camera fullscreen uses
+the in-place controller in both Camera Card and the printer card.
 
 ## Activation glow
 

@@ -359,3 +359,231 @@ export function createMediaFullscreenAPI(
     },
   };
 }
+
+/** Immersive, in-place viewport expansion. No modal shell or duplicate player. */
+export const mediaFullscreenStyles = css`
+  :host([data-media-fullscreen]),
+  [data-media-fullscreen] {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-sizing: border-box;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-width: none !important;
+    max-height: none !important;
+    z-index: 10000;
+    background: black;
+    overflow: hidden;
+  }
+  :host([data-media-fullscreen])::backdrop,
+  [data-media-fullscreen]::backdrop {
+    background: black;
+  }
+`;
+
+type OverflowSnapshot = { value: string; priority: string };
+interface MediaViewportLock {
+  owners: MediaFullscreenFallbackController[];
+  root: OverflowSnapshot;
+  body?: OverflowSnapshot;
+}
+// Symbol.for makes independently bundled card copies cooperate on the same page.
+const mediaLockKey = Symbol.for("bitosome.ha-card-ui.media-viewport-lock.v1");
+type MediaDocument = Document & { [mediaLockKey]?: MediaViewportLock };
+const saveOverflow = (element: HTMLElement): OverflowSnapshot => ({
+  value: element.style.getPropertyValue("overflow"),
+  priority: element.style.getPropertyPriority("overflow"),
+});
+const restoreOverflow = (
+  element: HTMLElement,
+  saved: OverflowSnapshot,
+): void => {
+  // Do not undo a new owner's deliberate style change while expanded.
+  if (element.style.getPropertyValue("overflow") !== "hidden") return;
+  if (saved.value)
+    element.style.setProperty("overflow", saved.value, saved.priority);
+  else element.style.removeProperty("overflow");
+};
+const focusedElement = (document: Document): HTMLElement | undefined => {
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement)
+    active = active.shadowRoot.activeElement;
+  return active instanceof (document.defaultView?.HTMLElement ?? HTMLElement)
+    ? (active as HTMLElement)
+    : undefined;
+};
+const mediaFocusable = (target: HTMLElement): HTMLElement[] => {
+  const result: HTMLElement[] = [];
+  const visit = (root: ParentNode): void => {
+    for (const element of Array.from(root.children)) {
+      const candidate = element as HTMLElement;
+      if (candidate.matches("[hidden], [inert], [disabled]")) continue;
+      const style =
+        candidate.ownerDocument.defaultView?.getComputedStyle(candidate);
+      if (style?.display === "none" || style?.visibility === "hidden") continue;
+      if (
+        candidate.tabIndex >= 0 &&
+        candidate.matches(
+          "button, a[href], input, select, textarea, [tabindex]",
+        )
+      )
+        result.push(candidate);
+      if (candidate.shadowRoot) visit(candidate.shadowRoot);
+      else visit(candidate);
+    }
+  };
+  if (target.shadowRoot) visit(target.shadowRoot);
+  else visit(target);
+  return result;
+};
+
+/**
+ * Native-first callers use this only when native fullscreen is unavailable.
+ * The original element is promoted to the browser top layer through a manual
+ * popover where supported, avoiding HA transform/contain/overflow ancestors.
+ * Older browsers keep the same fixed-viewport fallback. The player never moves
+ * or remounts. Compose mediaFullscreenStyles in the target's styling root.
+ */
+export class MediaFullscreenFallbackController implements ReactiveController {
+  private target?: HTMLElement;
+  private opener?: HTMLElement;
+  private previousPopover: string | null = null;
+  private previousTabIndex: string | null = null;
+  private popoverOpen = false;
+  constructor(
+    private host: MediaHost,
+    private options: { onChange?: (active: boolean) => void } = {},
+  ) {
+    host.addController?.(this);
+  }
+  get active(): boolean {
+    return !!this.target;
+  }
+  open(target: HTMLElement, opener?: HTMLElement): void {
+    if (this.target === target || !target.isConnected) return;
+    this.close(false);
+    this.target = target;
+    this.opener = opener ?? focusedElement(target.ownerDocument);
+    this.previousPopover = target.getAttribute("popover");
+    this.previousTabIndex = target.getAttribute("tabindex");
+    target.setAttribute("data-media-fullscreen", "");
+    if (this.previousTabIndex === null) target.tabIndex = -1;
+    const doc = target.ownerDocument as MediaDocument;
+    let lock = doc[mediaLockKey];
+    if (!lock) {
+      lock = {
+        owners: [],
+        root: saveOverflow(doc.documentElement),
+        body: doc.body ? saveOverflow(doc.body) : undefined,
+      };
+      doc[mediaLockKey] = lock;
+      doc.documentElement.style.setProperty("overflow", "hidden");
+      doc.body?.style.setProperty("overflow", "hidden");
+    }
+    lock.owners.push(this);
+    doc.addEventListener("keydown", this.onKeyDown, true);
+    target.addEventListener("toggle", this.onToggle);
+    if (typeof target.showPopover === "function") {
+      try {
+        target.setAttribute("popover", "manual");
+        target.showPopover();
+        this.popoverOpen = true;
+      } catch {
+        this.restorePopover(target);
+      }
+    }
+    this.options.onChange?.(true);
+    this.host.requestUpdate();
+    const controls = mediaFocusable(target);
+    (this.opener && controls.includes(this.opener)
+      ? this.opener
+      : controls[0] ?? target
+    ).focus({ preventScroll: true });
+  }
+  close(restoreFocus = true): void {
+    const target = this.target;
+    if (!target) return;
+    this.target = undefined;
+    const doc = target.ownerDocument as MediaDocument;
+    doc.removeEventListener("keydown", this.onKeyDown, true);
+    target.removeEventListener("toggle", this.onToggle);
+    if (this.popoverOpen) {
+      try {
+        target.hidePopover();
+      } catch {
+        /* Browser may have already hidden it. */
+      }
+    }
+    this.popoverOpen = false;
+    this.restorePopover(target);
+    target.removeAttribute("data-media-fullscreen");
+    if (this.previousTabIndex === null) target.removeAttribute("tabindex");
+    else target.setAttribute("tabindex", this.previousTabIndex);
+    const lock = doc[mediaLockKey];
+    const wasTop = lock?.owners[lock.owners.length - 1] === this;
+    if (lock) {
+      lock.owners = lock.owners.filter((owner) => owner !== this);
+      if (!lock.owners.length) {
+        restoreOverflow(doc.documentElement, lock.root);
+        if (doc.body && lock.body) restoreOverflow(doc.body, lock.body);
+        delete doc[mediaLockKey];
+      }
+    }
+    this.options.onChange?.(false);
+    this.host.requestUpdate();
+    const opener = this.opener;
+    this.opener = undefined;
+    if (restoreFocus && wasTop && opener?.isConnected)
+      opener.focus({ preventScroll: true });
+  }
+  hostDisconnected(): void {
+    this.close(false);
+  }
+  hostUpdated(): void {
+    if (this.target && !this.target.isConnected) this.close(false);
+  }
+  private restorePopover(target: HTMLElement): void {
+    if (this.previousPopover === null) target.removeAttribute("popover");
+    else target.setAttribute("popover", this.previousPopover);
+  }
+  private onToggle = (event: Event): void => {
+    if ((event as ToggleEvent).newState === "closed" && this.popoverOpen) {
+      // A queued close from a previous expansion must not close a reopened one.
+      try {
+        if (this.target?.matches(":popover-open")) return;
+      } catch {
+        /* Older engines. */
+      }
+      this.close();
+    }
+  };
+  private onKeyDown = (event: KeyboardEvent): void => {
+    const target = this.target;
+    if (!target) return;
+    const doc = target.ownerDocument as MediaDocument;
+    const owners = doc[mediaLockKey]?.owners;
+    if (owners?.[owners.length - 1] !== this) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.close();
+    } else if (event.key === "Tab") {
+      const controls = mediaFocusable(target);
+      const active = focusedElement(doc);
+      const index = active ? controls.indexOf(active) : -1;
+      const next = !controls.length
+        ? target
+        : event.shiftKey
+          ? controls[(index <= 0 ? controls.length : index) - 1]
+          : controls[(index + 1) % controls.length];
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      next.focus({ preventScroll: true });
+    }
+  };
+}
