@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.1.0/bitosome-ha-card-ui-1.1.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.3.0/bitosome-ha-card-ui-1.3.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -26,7 +26,7 @@ Compose `designTokens`, `familyStyles`, `componentStyles`, `headerStyles`,
 in Lit `static styles` (or use each `.cssText` in a vanilla panel).
 
 Templates: `actionPill`, `stateChip`, `metricTile`, `notice`, `disclosure`,
-`uiIcon`, `tileGlow`, `renderFamilyDialog`. All templates remain in the consumer's
+`uiIcon`, `tileGlow`, `renderFamilyDialog`, `pendingIndicator`. All templates remain in the consumer's
 shadow root. Values are escaped by Lit. Actions receive callbacks; no component
 calls a Home Assistant service itself. `showEntityMoreInfo` is a small native HA
 event adapter.
@@ -187,3 +187,9 @@ API changes use semantic versioning. See `consumers.json` for owning repositorie
 Foundation extracted from MIT-licensed bitosome/space-hub-card v2.0.85, commit
 fef0a785d900a2cea0b6b6ef02a274b674f3d171. Its theme tokens and glow remain the
 reference; this package is now their canonical implementation.
+
+### Pending actions and confirmation buttons
+
+Use `pendingIndicator()` inside an action while its command is pending; pair it with a visible pending label and `aria-busy`. `actionPill({pending: true})` does this automatically. Reduced motion keeps the indicator static. A `family-visually-hidden` live region can announce progress without duplicating visible notices. Errors still need a visible recovery path.
+
+Use `renderFamilyDialog(..., {footerLayout: "equal", ...})` for two confirmation actions. They share equal widths and a minimum 48px height; default dialog footer layouts are unchanged.

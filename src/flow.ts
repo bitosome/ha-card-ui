@@ -259,6 +259,8 @@ export interface FamilyDialogOptions {
   title: string;
   content: unknown;
   footer?: unknown;
+  /** Two balanced confirmation actions. Default keeps the existing trailing action layout. */
+  footerLayout?: "equal";
   wide?: boolean;
   long?: boolean;
   className?: string;
@@ -330,7 +332,7 @@ export function renderFamilyDialog(
     options.footer !== nothing &&
     options.footer !== false &&
     !flow.confirmation
-      ? html`<footer class="family-dialog-footer">${options.footer}</footer>`
+      ? html`<footer class="family-dialog-footer ${options.footerLayout === "equal" ? "equal" : ""}">${options.footer}</footer>`
       : nothing}
   </dialog>`;
 }

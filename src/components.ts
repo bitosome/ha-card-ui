@@ -3,6 +3,11 @@ import { css, html, nothing } from "lit";
 export type Tone = "neutral" | "accent" | "success" | "warning" | "error";
 const icon = (name?: string) =>
   name ? html`<ha-icon .icon=${name} aria-hidden="true"></ha-icon>` : nothing;
+/** Decorative busy marker; the owning control supplies its pending label and aria-busy. */
+export function pendingIndicator() {
+  return html`<span class="family-pending-indicator" aria-hidden="true"></span>`;
+}
+
 export function actionPill(options: {
   label: string;
   icon?: string;
@@ -24,7 +29,7 @@ export function actionPill(options: {
     aria-busy=${options.pending ? "true" : "false"}
     @click=${options.onClick}
   >
-    ${icon(options.icon)}${options.pending
+    ${options.pending ? pendingIndicator() : icon(options.icon)}${options.pending
       ? options.pendingLabel || "Saving…"
       : options.label}
   </button>`;
@@ -131,6 +136,26 @@ export function disclosure(options: {
   </section>`;
 }
 export const componentStyles = css`
+  .family-pending-indicator {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    box-sizing: border-box;
+    border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: family-pending-spin 800ms linear infinite;
+  }
+  @keyframes family-pending-spin {
+    to { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .family-pending-indicator {
+      animation: none;
+    }
+  }
+
   .family-actions {
     display: flex;
     flex-wrap: wrap;

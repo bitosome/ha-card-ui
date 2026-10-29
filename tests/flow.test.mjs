@@ -28,6 +28,8 @@ const {
   glowStyles,
   componentStyles,
   familyStyles,
+  dialogStyles,
+  pendingIndicator,
   actionPill,
   stateChip,
   metricTile,
@@ -379,5 +381,84 @@ test("glow scope keeps wrappers neutral and every shared surface above the under
   } finally {
     scope.remove();
     style.remove();
+  }
+});
+
+
+test("pending actions replace their decorative icon, block repeats and restore ready behavior", () => {
+  const node = document.createElement("div");
+  let calls = 0;
+  const draw = (pending) => render(actionPill({
+    label: "Unlock", icon: "mdi:lock-outline", pending,
+    pendingLabel: "Unlocking…", onClick: () => calls++,
+  }), node);
+  draw(true);
+  const button = node.querySelector("button");
+  assert.equal(button.getAttribute("aria-busy"), "true");
+  assert.equal(button.textContent.trim(), "Unlocking…");
+  assert.equal(button.querySelector("ha-icon"), null);
+  const indicator = button.querySelector(".family-pending-indicator");
+  assert.equal(indicator.getAttribute("aria-hidden"), "true");
+  assert.equal(indicator.hasAttribute("role"), false);
+  button.click();
+  assert.equal(calls, 0);
+  draw(false);
+  assert.equal(button.getAttribute("aria-busy"), "false");
+  assert.equal(button.querySelector(".family-pending-indicator"), null);
+  assert.equal(button.querySelector("ha-icon").icon, "mdi:lock-outline");
+  button.click();
+  assert.equal(calls, 1);
+});
+
+test("balanced confirmation footer is opt-in and stays hidden behind a dirty guard", () => {
+  let dirty = false;
+  const { flow, container } = setup({ guard: () => ({ dirty }) });
+  flow.open("confirm");
+  const options = {
+    title: "Unlock car?", content: "This unlocks the car remotely.",
+    footer: html`<button class="family-action">Cancel</button><button class="family-action primary">Unlock</button>`,
+  };
+  render(renderFamilyDialog(flow, options), container);
+  assert.equal(container.querySelector("footer").classList.contains("equal"), false);
+  render(renderFamilyDialog(flow, { ...options, footerLayout: "equal" }), container);
+  assert.equal(container.querySelector("footer").classList.contains("equal"), true);
+  assert.equal(container.querySelectorAll("footer button").length, 2);
+  dirty = true;
+  flow.close();
+  render(renderFamilyDialog(flow, { ...options, footerLayout: "equal" }), container);
+  assert.equal(container.querySelector("footer"), null);
+  assert.ok(container.querySelector('[aria-label="Unsaved changes"]'));
+  flow.discardAndContinue();
+  container.remove();
+});
+
+test("nonvisual status and busy indicators preserve readable, bounded control styling", () => {
+  const style = document.createElement("style");
+  style.textContent = `${familyStyles.cssText} ${componentStyles.cssText} ${dialogStyles.cssText}`;
+  document.head.append(style);
+  const node = document.createElement("div");
+  document.body.append(node);
+  render(html`${actionPill({ label: "Save", pending: true, onClick: () => {} })}
+    ${pendingIndicator()}<span class="family-visually-hidden" role="status">Saving</span>
+    <footer class="family-dialog-footer equal"><button class="family-action">Cancel</button><button class="family-action">Confirm a longer action</button></footer>`, node);
+  try {
+    const buttonStyle = window.getComputedStyle(node.querySelector("button"));
+    assert.equal(buttonStyle.opacity, "1");
+    assert.equal(buttonStyle.cursor, "progress");
+    const liveStyle = window.getComputedStyle(node.querySelector('[role="status"]'));
+    assert.equal(liveStyle.position, "absolute");
+    assert.notEqual(liveStyle.display, "none");
+    assert.notEqual(liveStyle.visibility, "hidden");
+    const spinnerStyle = window.getComputedStyle(node.querySelector(".family-pending-indicator"));
+    assert.equal(spinnerStyle.width, "22px");
+    assert.equal(spinnerStyle.height, "22px");
+    const footer = window.getComputedStyle(node.querySelector("footer"));
+    assert.equal(footer.display, "grid");
+    assert.match(footer.gridTemplateColumns, /repeat\(2,/);
+    assert.ok([...node.querySelectorAll("footer button")].every(button => window.getComputedStyle(button).minHeight === "48px"));
+    // DOM fixtures cannot simulate motion media queries; ensure the opt-out remains shipped.
+    assert.match(componentStyles.cssText, /prefers-reduced-motion: reduce[\s\S]*family-pending-indicator[\s\S]*animation: none/);
+  } finally {
+    node.remove(); style.remove();
   }
 });

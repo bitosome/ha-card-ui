@@ -102,6 +102,21 @@ export const familyStyles = css`
     opacity: 0.45;
     cursor: default;
   }
+  .family-action[aria-busy="true"]:disabled {
+    opacity: 1;
+    cursor: progress;
+  }
+  .family-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
   .family-action {
     min-width: 44px;
     box-sizing: border-box;
@@ -466,6 +481,18 @@ export const dialogStyles = css`
     gap: 8px;
     padding: 12px 16px;
     border-top: 1px solid var(--divider-color, #8883);
+  }
+  .family-dialog-footer.equal {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+  .family-dialog-footer.equal > .family-action {
+    min-width: 0;
+    width: 100%;
+    min-height: 48px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .family-dialog button:focus-visible,
   .family-dialog input:focus-visible,
