@@ -1,6 +1,7 @@
 import { css, html, nothing, type TemplateResult } from "lit";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { UI_ICONS } from "./primitives.js";
+import { meterStyles } from "./meter.js";
 
 export type Tone =
   | "neutral"
@@ -292,6 +293,7 @@ export function disclosure(options: {
   </section>`;
 }
 export const componentStyles = css`
+  ${meterStyles}
   .family-pending-indicator {
     display: inline-block;
     width: 22px;
@@ -338,9 +340,17 @@ export const componentStyles = css`
   .family-toggle[aria-pressed="true"] ha-icon {
     color: var(--primary-color);
   }
-  /* The check keeps its slot when unpressed, so selecting never shifts layout. */
+  /*
+   * Unpressed, the check keeps its slot (so selecting never changes the pill's width,
+   * whatever padding a card sets) and the label is shifted by half that slot
+   * (22px icon + 8px gap) so it reads centred. translate does not affect layout.
+   * Low specificity: a left-aligned option list can reset it with "translate: none".
+   */
   .family-toggle[aria-pressed="false"] .family-toggle-check {
     visibility: hidden;
+  }
+  .family-toggle:where([aria-pressed="false"]:has(> .family-toggle-check)) > :where(:not(.family-toggle-check)) {
+    translate: 15px 0;
   }
   .family-chip .family-visually-hidden {
     position: absolute;

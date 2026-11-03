@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.4.0/bitosome-ha-card-ui-1.4.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.5.0/bitosome-ha-card-ui-1.5.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -25,7 +25,7 @@ Compose `designTokens`, `familyStyles`, `componentStyles`, `headerStyles`,
 `metricStyles`, `telemetryStyles`, `navigationStyles`, `dialogStyles`, `glowStyles`
 in Lit `static styles` (or use each `.cssText` in a vanilla panel).
 
-Templates: `actionPill`, `togglePill`, `stateChip`, `metricTile`, `notice`,
+Templates: `actionPill`, `togglePill`, `levelMeter`, `stateChip`, `metricTile`, `notice`,
 `asyncState`, `disclosure`, `uiIcon`, `tileGlow`, `renderFamilyDialog`, `pendingIndicator`. All templates remain in the consumer's
 shadow root. Values are escaped by Lit. Actions receive callbacks; no component
 calls a Home Assistant service itself. `showEntityMoreInfo` is a small native HA
@@ -201,9 +201,14 @@ Every `data-tone` resolves through one chain defined in `familyStyles`: `--famil
 - `notice({tone, title, message, icon, body, action, actions, role})` shows the tone's severity icon (`TONE_ICONS`) unless `icon: false`, an optional bold title, extra body content and several recovery actions. Errors default to `role="alert"`, everything else to `status`.
 - `asyncState({state: "loading" | "empty" | "error", message, onRetry, retryLabel, retrying})` keeps loading, `No activity yet` and `Could not load activity` distinct, with one retry action.
 - `actionPill` adds `emphasis: "primary" | "secondary" | "quiet" | "destructive"` (the `primary`/`destructive` booleans still work), `ariaLabel`, `hasPopup`, `className` and `initialFocus`, which marks Cancel in a destructive confirmation as the dialog's first focus.
-- `togglePill({label, pressed, onClick, icon})` is an enabled/selected pill with `aria-pressed`; it keeps its icon and shows a trailing check when pressed, without shifting layout.
+- `togglePill({label, pressed, onClick, icon})` is an enabled/selected pill with `aria-pressed`; it keeps its icon and shows a trailing check when pressed, without shifting layout. Unpressed, the check keeps its slot and the label is shifted visually so it reads centred, whatever padding the card sets (1.5.0); a left-aligned option list resets that with `translate: none` on the pill's children. String-template cards copy the markup: `class="family-action family-toggle"`, `aria-pressed`, a label `<span>` and a trailing `<ha-icon class="family-toggle-check">` as a direct child.
 - `stateChip` adds `ariaLabel` (e.g. "Front left door open"; the secondary line is appended to the spoken name), a quieter `secondary` line, `hasPopup` and `className`. `tone: "unavailable"` renders an outlined chip in the unavailable text colour.
 
 ### Formatting and unavailable values (1.4.0)
 
 `formatHassNumber`, `formatHassCurrency`, `formatHassTime`, `formatHassDate`, `formatHassDateTime`, `formatHassRelative` and `formatHassDuration` read the HA profile (`hass.locale` language, number format, 12/24-hour clock and local/server time zone) the same way the HA frontend does. Callers pass the quantity's precision (`digits`) and unit. Missing, `unavailable`/`unknown`, non-numeric (booleans, blanks, objects) and non-finite input returns `UNAVAILABLE_TEXT` (`Unavailable`), never `0`; use `NOT_CONFIGURED_TEXT` for unbound optional data and `isAvailableValue` to decide whether to show a unit. Style missing values with `.family-unavailable` or `data-tone="unavailable"`. Durations show the largest unit and the next non-zero one, e.g. `1 h 5 min`. Invalid locale tags, currencies or zones degrade to `Unavailable` (or the browser zone) instead of throwing during render.
+
+### Level meters (1.5.0)
+
+`levelMeter({value, label, valueText, tone, target, className})` is the one 0–100 % bar for battery charge, fan speed and similar levels, so every card shows the same 6px track, colours and target marker. It is a `role="meter"` with an accessible name; a missing value draws an empty track announced as Unavailable. The fill uses `tone` (default `accent`, the primary colour). `batteryTone(percent)` returns the shared vehicle battery bands: 60 % and above `success`, 20–59 % `warning`, below 20 % `error`. Cards that render HTML strings use `levelMeterMarkup()`, which escapes its text. The styles ship in `componentStyles`; the card sets only spacing through `className`.
+

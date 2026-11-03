@@ -134,3 +134,13 @@ test("every tone resolves through one family alias chain that keeps HA theme ove
   assert.match(css, /\.family-action\.quiet\s*\{[^}]*background: transparent/);
   assert.match(css, /\.family-toggle\[aria-pressed="true"\]/);
 });
+
+test("an unpressed toggle centres its label instead of reserving an invisible check", () => {
+  const css = componentStyles.cssText;
+  // The check keeps its slot, so a card's own toggle padding can never make selection change width.
+  assert.match(css, /\.family-toggle\[aria-pressed="false"\] \.family-toggle-check\s*\{\s*visibility: hidden;/);
+  assert.doesNotMatch(css, /family-toggle-check\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(css, /padding-inline: 29px/);
+  // Half of (22px check + 8px gap) moves the label to the visual centre without affecting layout.
+  assert.match(css, /\.family-toggle:where\(\[aria-pressed="false"\]:has\(> \.family-toggle-check\)\) > :where\(:not\(\.family-toggle-check\)\)\s*\{\s*translate: 15px 0;/);
+});
