@@ -5,12 +5,12 @@
     {
       "checkout": "space-hub-card-editor-navigation",
       "repository": "bitosome/space-hub-card",
-      "interaction": "Tiles and native HA more-info; canonical activation glow"
+      "interaction": "Tiles, weather forecast chart and native HA more-info; canonical activation glow"
     },
     {
       "checkout": "real-electricity-price-card",
       "repository": "bitosome/real-electricity-price-card",
-      "interaction": "Chart and native HA more-info"
+      "interaction": "Price chart and native HA more-info"
     },
     {
       "checkout": "smartevse-dual-charger-card",
@@ -55,7 +55,7 @@
     {
       "checkout": "3d-printer-card",
       "repository": "bitosome/3d-printer-card",
-      "interaction": "Read-only printer status, AMS, camera and shared history/details/preview modal flows"
+      "interaction": "Read-only printer status, AMS, camera, power chart and shared history/details/preview modal flows"
     },
     {
       "checkout": "budget",
