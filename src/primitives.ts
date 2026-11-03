@@ -67,6 +67,16 @@ export const familyStyles = css`
       var(--paper-font-body1_-_font-family, inherit)
     );
     font-family: var(--family-font);
+    /* Semantic aliases: one resolution order for every card. The HA theme's
+       --success/--warning/--error-color win, so user themes keep working; the
+       family --status-* palette is the fallback. Card CSS uses these aliases. */
+    --family-success: var(--success-color, var(--status-success-color, #66bb6a));
+    --family-caution: var(--status-caution-color, #ffca28);
+    --family-warning: var(--warning-color, var(--status-warn-color, #ff9800));
+    --family-error: var(--error-color, var(--status-alert-color, #e53935));
+    --family-active: var(--status-active-color, #42a5f5);
+    /* Readable text colour for missing data; always paired with a text label. */
+    --family-unavailable: var(--secondary-text-color);
   }
   .family-icon-button {
     display: inline-grid;

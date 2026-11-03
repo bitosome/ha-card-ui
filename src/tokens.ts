@@ -63,6 +63,7 @@ export const DESIGN_TOKENS_CSS = `
     --status-success-color: #66bb6a;
     --status-alert-color: #e53935;
     --status-warn-color: #ff9800;
+    --status-caution-color: #ffca28;
     --status-cool-color: #00aaff;
     --status-heat-color: #ff7043;
     --status-dry-color: #ffca28;
