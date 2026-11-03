@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.5.0/bitosome-ha-card-ui-1.5.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.6.0/bitosome-ha-card-ui-1.6.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -120,6 +120,7 @@ target and verifies real entry. `false` means unsupported, rejected or no actual
 transition; use `MediaFullscreenFallbackController` for the in-place viewport fallback. Do not replace another
 element's fullscreen or open a fallback over an unsuccessful exit while the target
 is still fullscreen. `isMediaFullscreen(api, target)` reports actual ownership.
+Since 1.6.0 `isMediaFullscreen` also reads ownership from the target's own root (and `:fullscreen`), so a card nested in Home Assistant's shadow DOM recognises its own fullscreen even through an adapter such as `screenfull` that only sees the outer host, and its exit button works. Toggles wait briefly for prefixed WebKit requests to settle.
 Use `createMediaFullscreenAPI(document)` for standard/WebKit native methods and
 nested shadow-root ownership, or pass a compatible `screenfull` adapter. Consumers
 own native fullscreen-change listeners and safe-area controls. The fallback
@@ -211,4 +212,16 @@ Every `data-tone` resolves through one chain defined in `familyStyles`: `--famil
 ### Level meters (1.5.0)
 
 `levelMeter({value, label, valueText, tone, target, className})` is the one 0–100 % bar for battery charge, fan speed and similar levels, so every card shows the same 6px track, colours and target marker. It is a `role="meter"` with an accessible name; a missing value draws an empty track announced as Unavailable. The fill uses `tone` (default `accent`, the primary colour). `batteryTone(percent)` returns the shared vehicle battery bands: 60 % and above `success`, 20–59 % `warning`, below 20 % `error`. Cards that render HTML strings use `levelMeterMarkup()`, which escapes its text. The styles ship in `componentStyles`; the card sets only spacing through `className`.
+
+### Media overlay controls (1.6.0)
+
+Camera Card and the printer camera share one overlay, taken 1:1 from Camera Card's compact layout. Compose `mediaControlStyles` after the family styles and render inside the element that goes fullscreen:
+
+- `mediaControls([...buttons])`: the top-right row, 8px from the edges with 8px between 44px buttons.
+- `mediaButton({icon, activeIcon, label, onClick, active, pressed, pending, disabled})`: a rounded dark button. `active` uses the primary fill and swaps to `activeIcon`; the label names the next action. `pressed` is only for selectable items such as presets.
+- `mediaZoomReset({hass, scale, onClick})`, `mediaNavigation({onPrevious, onNext})` and `mediaMessage(text, {icon})` for the zoom pill, camera arrows and centred status text.
+
+Fullscreen keeps exactly the same row, button size and spacing. Only the insets grow, to clear notches and the home indicator: add `family-media-fullscreen` to the frame (`:fullscreen` and `[data-media-fullscreen]` are covered automatically). Size buttons with `--family-media-button-size` and `--family-media-icon-size`.
+
+`levelMeter` also takes `role: "progressbar"` for task progress, and `--family-level-color` sets a card-owned fill colour (e.g. a printer status colour).
 

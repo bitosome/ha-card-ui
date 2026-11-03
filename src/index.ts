@@ -5,4 +5,5 @@ export * from "./components.js";
 export * from "./meter.js";
 export * from "./glow.js";
 export * from "./media.js";
+export * from "./media-controls.js";
 export * from "./format.js";

@@ -14,8 +14,10 @@ export interface LevelMeterOptions {
   label: string;
   /** Spoken value; defaults to `42%` or `Unavailable`. */
   valueText?: string;
-  /** Fill colour; defaults to the accent (primary) colour. */
+  /** Fill colour; defaults to the accent (primary) colour. A card can instead set `--family-level-color`. */
   tone?: Tone;
+  /** `progressbar` for task progress such as a print job; `meter` (default) for a measured level. */
+  role?: "meter" | "progressbar";
   /** Optional 0–100 marker, e.g. a charge target; kept fully visible at 0 and 100. */
   target?: number | null;
   className?: string;
@@ -52,7 +54,7 @@ export function levelMeter(options: LevelMeterOptions) {
   const { value, target, tone, valueText } = resolve(options);
   return html`<div
     class="family-level-meter ${options.className || ""}"
-    role="meter"
+    role=${options.role || "meter"}
     aria-label=${options.label}
     aria-valuemin="0"
     aria-valuemax="100"
@@ -71,7 +73,7 @@ export function levelMeterMarkup(options: LevelMeterOptions): string {
   const { value, target, tone, valueText } = resolve(options);
   const now = value === undefined ? "" : ` aria-valuenow="${value}"`;
   const marker = target === undefined ? "" : `<span class="family-level-target" style="left:clamp(1px, ${target}%, calc(100% - 1px))"></span>`;
-  return `<div class="family-level-meter ${escapeHtml(options.className || "")}" role="meter" aria-label="${escapeHtml(options.label)}" aria-valuemin="0" aria-valuemax="100"${now} aria-valuetext="${escapeHtml(valueText)}"><span class="family-level-fill" data-tone="${escapeHtml(tone)}" style="width:${value ?? 0}%"></span>${marker}</div>`;
+  return `<div class="family-level-meter ${escapeHtml(options.className || "")}" role="${options.role === "progressbar" ? "progressbar" : "meter"}" aria-label="${escapeHtml(options.label)}" aria-valuemin="0" aria-valuemax="100"${now} aria-valuetext="${escapeHtml(valueText)}"><span class="family-level-fill" data-tone="${escapeHtml(tone)}" style="width:${value ?? 0}%"></span>${marker}</div>`;
 }
 
 /** Part of `componentStyles`, which also resolves `data-tone` to `--family-tone`. */
@@ -87,7 +89,7 @@ export const meterStyles = css`
     display: block;
     height: 100%;
     border-radius: inherit;
-    background: var(--family-tone, var(--primary-color));
+    background: var(--family-level-color, var(--family-tone, var(--primary-color)));
     transition: width 0.3s;
   }
   .family-level-target {

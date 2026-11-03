@@ -276,6 +276,10 @@ export function ensureCameraStreamElements(
   return pending;
 }
 
+type FullscreenRoot = (Document | ShadowRoot) & {
+  webkitFullscreenElement?: Element | null;
+};
+
 export interface MediaFullscreenAPI {
   readonly isEnabled: boolean;
   readonly isFullscreen: boolean;
@@ -283,10 +287,42 @@ export interface MediaFullscreenAPI {
   request(element: Element): Promise<void>;
   exit(): Promise<void>;
 }
+/**
+ * True when the target itself owns native fullscreen, read from the target's own
+ * root. Inside Home Assistant the document only reports the outermost shadow host,
+ * so an adapter's `element` (e.g. screenfull's) can never equal a nested card.
+ */
+function ownsFullscreen(target: Element): boolean {
+  const root = target.getRootNode?.() as FullscreenRoot | undefined;
+  if (root && (root.fullscreenElement ?? root.webkitFullscreenElement) === target) return true;
+  for (const selector of [":fullscreen", ":-webkit-full-screen"]) {
+    try {
+      // Matches the fullscreen element, or a shadow host whose own tree holds it.
+      if (target.matches(selector)) return true;
+    } catch {
+      /* Unsupported selector in this engine. */
+    }
+  }
+  return false;
+}
+
 export const isMediaFullscreen = (
   api: MediaFullscreenAPI,
   target: Element,
-): boolean => api.isEnabled && api.isFullscreen && api.element === target;
+): boolean =>
+  api.isEnabled &&
+  api.isFullscreen &&
+  (api.element === target || ownsFullscreen(target));
+
+/** Prefixed WebKit methods return no promise; wait briefly for the state to land. */
+async function settle(done: () => boolean, timeoutMs = 600): Promise<boolean> {
+  const start = Date.now();
+  while (!done()) {
+    if (Date.now() - start >= timeoutMs) return false;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  return true;
+}
 
 /** False asks the caller to use its top-layer fallback; unrelated fullscreen is untouched. */
 export async function toggleMediaFullscreen(
@@ -298,18 +334,15 @@ export async function toggleMediaFullscreen(
     if (api.isFullscreen) {
       if (!isMediaFullscreen(api, target)) return false;
       await api.exit();
-      return !api.isFullscreen;
+      return settle(() => !api.isFullscreen);
     }
     await api.request(target);
-    return isMediaFullscreen(api, target);
+    return settle(() => isMediaFullscreen(api, target));
   } catch {
     return false;
   }
 }
 
-type FullscreenRoot = (Document | ShadowRoot) & {
-  webkitFullscreenElement?: Element | null;
-};
 type FullscreenDocument = Document & {
   webkitFullscreenEnabled?: boolean;
   webkitExitFullscreen?: () => void | Promise<void>;

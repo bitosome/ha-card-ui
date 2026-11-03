@@ -568,3 +568,68 @@ test("removing the expanded frame without disconnecting its host releases viewpo
     assert.equal(win.document.documentElement.style.overflow, "");
     assert.equal(win.document.body.style.overflow, "");
   }));
+
+test("a screenfull-style adapter that only sees the outer host still lets a nested card exit", async () =>
+  withWindow(async (win) => {
+    const doc = win.document,
+      outer = doc.createElement("div"),
+      card = doc.createElement("div");
+    doc.body.append(outer);
+    outer.attachShadow({ mode: "open" }).append(card);
+    let exits = 0;
+    // Inside Home Assistant the document reports the outermost shadow host.
+    const api = {
+      isEnabled: true,
+      isFullscreen: false,
+      element: null,
+      async request() {
+        this.isFullscreen = true;
+        this.element = outer;
+        Object.defineProperty(outer.shadowRoot, "fullscreenElement", { value: card, configurable: true });
+      },
+      async exit() {
+        exits++;
+        this.isFullscreen = false;
+        this.element = null;
+        Object.defineProperty(outer.shadowRoot, "fullscreenElement", { value: null, configurable: true });
+      },
+    };
+    assert.equal(await toggleMediaFullscreen(api, card), true, "entry is recognised from the card's own root");
+    assert.equal(isMediaFullscreen(api, card), true);
+    assert.equal(isMediaFullscreen(api, outer), true, "the host owns it too through its own tree");
+    assert.equal(await toggleMediaFullscreen(api, card), true, "the second press exits");
+    assert.equal(exits, 1);
+    const sibling = doc.createElement("div");
+    outer.shadowRoot.append(sibling);
+    await api.request();
+    assert.equal(isMediaFullscreen(api, sibling), false, "an unrelated element never owns it");
+    assert.equal(await toggleMediaFullscreen(api, sibling), false);
+    assert.equal(exits, 1);
+  }));
+
+test("a prefixed request that settles after the call still counts as entered", async () =>
+  withWindow(async (win) => {
+    const target = win.document.createElement("div");
+    const api = {
+      isEnabled: true,
+      isFullscreen: false,
+      element: null,
+      request(element) {
+        setTimeout(() => {
+          this.isFullscreen = true;
+          this.element = element;
+        }, 60);
+        return Promise.resolve();
+      },
+      exit() {
+        setTimeout(() => {
+          this.isFullscreen = false;
+          this.element = null;
+        }, 60);
+        return Promise.resolve();
+      },
+    };
+    assert.equal(await toggleMediaFullscreen(api, target), true);
+    assert.equal(await toggleMediaFullscreen(api, target), true);
+    assert.equal(api.isFullscreen, false);
+  }));

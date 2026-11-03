@@ -64,6 +64,15 @@ test("a 100 % target stays fully inside the track", () => {
   }
 });
 
+test("print progress uses the progressbar role with the same bar", () => {
+  for (const meter of [mount(levelMeter({ value: 42, label: "Print progress", role: "progressbar" })), fromMarkup(levelMeterMarkup({ value: 42, label: "Print progress", role: "progressbar" }))]) {
+    assert.equal(meter.getAttribute("role"), "progressbar");
+    assert.equal(meter.getAttribute("aria-valuenow"), "42");
+    assert.ok(meter.classList.contains("family-level-meter"));
+  }
+  assert.equal(mount(levelMeter({ value: 42, label: "Battery" })).getAttribute("role"), "meter");
+});
+
 test("string meter escapes its text", () => {
   const markup = levelMeterMarkup({ value: 50, label: `Car "A" <b>` });
   assert.doesNotMatch(markup, /<b>/);
@@ -73,5 +82,5 @@ test("string meter escapes its text", () => {
 test("one track thickness for every level bar ships in componentStyles", () => {
   const css = componentStyles.cssText;
   assert.match(css, /\.family-level-meter\s*\{[^}]*height: 6px;/);
-  assert.match(css, /\.family-level-fill\s*\{[^}]*background: var\(--family-tone, var\(--primary-color\)\)/);
+  assert.match(css, /\.family-level-fill\s*\{[^}]*background: var\(--family-level-color, var\(--family-tone, var\(--primary-color\)\)\)/);
 });
