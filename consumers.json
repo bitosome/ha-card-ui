@@ -58,7 +58,7 @@
       "interaction": "Read-only printer status, AMS, camera, power chart and shared history/details/preview modal flows"
     },
     {
-      "checkout": "budget",
+      "checkout": "budget-manager",
       "repository": "bitosome/budget-manager",
       "interaction": "Full panel with shared guarded modal flows"
     }
