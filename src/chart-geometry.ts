@@ -38,6 +38,20 @@ export const CHART_MARGIN = { top: 15, bottom: 24, edge: 8, minAxis: 36 } as con
 export const CHART_FRAME_CHROME_PX = 36;
 /** Extra height of a legend row. */
 export const CHART_LEGEND_PX = 21;
+/** Height of one lane row under the plot (periods on a 10px track). */
+export const CHART_LANE_PX = 22;
+/** Space between the chart (its time labels) and the first lane. */
+export const CHART_LANES_GAP_PX = 6;
+/** Height of a lane's track and of the periods on it; both ends are round (rx 5). */
+export const CHART_LANE_TRACK_PX = 10;
+/** A period is never drawn narrower than this, so a short one stays visible. */
+export const CHART_PERIOD_MIN_PX = 3;
+/** Lane labels longer than this are cut to it, ellipsis included, so the axis gutter stays narrow. */
+export const CHART_LANE_LABEL_CHARS = 8;
+/** Height of an `active` period: 2 px taller than the track, centred on it, so it differs without colour or motion. */
+export const CHART_PERIOD_ACTIVE_PX = 12;
+/** Extra frame height of the period line under a chart with lanes (18 px line + 5 px gap), for card-size estimates. */
+export const CHART_PERIOD_LINE_PX = 23;
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -74,6 +88,15 @@ const clean = (value: number): number => Number(value.toPrecision(12));
 /** The drawn chart height for a configured one: CSS px, clamped to 82–360 (what the SVG and its state blocks use). */
 export function chartHeight(height: number): number {
   return clamp(Math.round(height) || 0, HEIGHT_RANGE[0], HEIGHT_RANGE[1]);
+}
+
+/**
+ * The drawn height of a chart with `lanes` rows of periods under it, for card-size estimates:
+ * `chartHeight(height)` plus 22 px per lane and a 6 px gap. Without lanes it is `chartHeight(height)`.
+ */
+export function chartTotalHeight(height: number, lanes: number = 0): number {
+  const rows = Math.max(0, Math.floor(lanes) || 0);
+  return chartHeight(height) + (rows ? rows * CHART_LANE_PX + CHART_LANES_GAP_PX : 0);
 }
 
 // ---------------------------------------------------------------- scales
@@ -315,6 +338,61 @@ export function niceDomain(values: number[], options: NiceDomainOptions): NiceDo
 
 export function estimateLabelWidth(text: string, charPx: number = CHART_LABEL_CHAR_PX): number {
   return text.length * charPx;
+}
+
+const WIDE_GLYPH = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+const EMOJI_GLYPH = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+/** 11px/600 advance widths per character class: [reserve (errs wide), typical]. Measured in Roboto and Helvetica. */
+const GLYPH_PX = {
+  emoji: [14, 14],
+  wide: [12, 11.2],
+  ellipsis: [11, 11],
+  capsWide: [10.4, 9.8],
+  caps: [7.6, 7.2],
+  lowerWide: [9.8, 9],
+  lower: [6, 5.6],
+  digit: [6.6, 6.1],
+  other: [4, 3.2],
+} as const;
+
+let segmenter: { segment(text: string): Iterable<{ segment: string }> } | null | undefined;
+/** User-perceived characters (`Intl.Segmenter`), so a flag, a family emoji or a letter with a combining mark stays whole; code points where it is missing. */
+function graphemes(text: string): string[] {
+  // Plain ASCII has one code unit per character: no segmenter needed for "XC40" or "Day tariff".
+  if (/^[\x20-\x7e]*$/.test(text)) return text.split("");
+  if (segmenter === undefined) {
+    const Segmenter = (Intl as unknown as { Segmenter?: new (locale?: string, options?: { granularity: "grapheme" }) => typeof segmenter }).Segmenter;
+    segmenter = Segmenter ? new Segmenter(undefined, { granularity: "grapheme" }) : null;
+  }
+  return segmenter ? Array.from(segmenter.segment(text), (part) => part.segment) : [...text];
+}
+
+/**
+ * Width of an 11px/600 label by character class instead of one width per character: capitals,
+ * CJK and emoji are far wider than lowercase. `reserve` (default) errs wide and is what a label
+ * gets room for; `typical` is the expected width, for "does this label fit" rules.
+ */
+export function estimateTextWidth(text: string, mode: "reserve" | "typical" = "reserve"): number {
+  const column = mode === "typical" ? 1 : 0;
+  let width = 0;
+  for (const glyph of graphemes(String(text ?? ""))) {
+    const ascii = glyph.length === 1 && glyph.charCodeAt(0) < 0x80;
+    const kind: keyof typeof GLYPH_PX = !ascii && EMOJI_GLYPH.test(glyph)
+      ? "emoji"
+      : !ascii && WIDE_GLYPH.test(glyph)
+        ? "wide"
+        : glyph === "…"
+          ? "ellipsis"
+          : /^[0-9]/.test(glyph)
+            ? "digit"
+            : glyph.toLowerCase() !== glyph
+              ? (/^[MW]/.test(glyph) ? "capsWide" : "caps")
+              : glyph.toUpperCase() !== glyph
+                ? (/^[mw]/.test(glyph) ? "lowerWide" : "lower")
+                : "other";
+    width += GLYPH_PX[kind][column];
+  }
+  return width;
 }
 
 /**
@@ -620,6 +698,73 @@ export interface ChartSeries<T = unknown> {
   format: (value: number) => string;
 }
 
+export type ChartPeriodTone = "planned" | "active" | "extra" | "warning" | "muted";
+
+/** A time range on a lane, e.g. one planned charging block. */
+export interface ChartPeriod {
+  /** ms; clipped to the chart domain. A period outside it, or with `end <= start`, is dropped. */
+  start: number;
+  end: number;
+  /** Default `planned`. */
+  tone?: ChartPeriodTone;
+  /** CSS colour (`chartSafeColor`); overrides the tone colour. Anything that is not a plain colour is ignored. */
+  color?: string;
+  /** Period line and aria text, e.g. "Charging", "Planned", "Extra while cheap". Defaults to the tone. */
+  label?: string;
+}
+
+/** A row of periods under the plot, on the plot's time scale: one car, one heating zone, one robot. */
+export interface ChartLane {
+  /** Unique within the chart: pattern ids and `data-lane` come from it. */
+  id: string;
+  /**
+   * Short row label in the right axis gutter; longer than 8 characters is cut with an ellipsis,
+   * so labels should differ within their first 7 characters.
+   */
+  label: string;
+  /** Periods should not overlap: the last one is drawn on top and is the one the selection reads. */
+  periods: ChartPeriod[];
+  /** A short vertical tick across this lane, e.g. the car's ready-by time. Outside the domain it is not drawn. */
+  marker?: { t: number; label?: string };
+  /** Draw every period with the `muted` tone and without animation (plan paused). */
+  muted?: boolean;
+  /**
+   * What a muted lane reads in the period line, aria text and description: "{label} {mutedLabel}",
+   * e.g. "Paused". Without it a muted lane reads "{label} {period.label} (paused)".
+   */
+  mutedLabel?: string;
+}
+
+/** A shaded time range inside the plot, behind the gridlines and series (e.g. hours without a published price). */
+export interface ChartBand {
+  /** ms; clipped to the chart domain. */
+  start: number;
+  end: number;
+  /**
+   * Drawn once at the top left inside the band when the band is at least as wide as the label
+   * plus 8 px; always part of the aria text and description. Name a narrow band in the legend too.
+   */
+  label?: string;
+  /** Default `hatched` (diagonal lines); `tint` is a flat, weaker fill. */
+  pattern?: "hatched" | "tint";
+  /** CSS colour; default `--family-chart-band`. */
+  color?: string;
+}
+
+/** A vertical time marker across the plot and the lanes. Outside the domain it is not drawn. */
+export interface ChartMarker {
+  t: number;
+  /**
+   * Drawn above the plot beside the line, on the side away from the nearer plot edge. Labels
+   * are placed in time order; one that would leave the plot or come within 8 px of an earlier
+   * label tries the other side and is dropped otherwise, so keep it short.
+   */
+  label?: string;
+  /** CSS colour (`chartSafeColor`); default `--family-chart-marker`, a neutral text-colour mix. */
+  color?: string;
+  dash?: boolean;
+}
+
 export interface TimeSeriesChartOptions<T = unknown> {
   /** Unique within the host: width key and gradient ids. */
   id: string;
@@ -656,12 +801,22 @@ export interface TimeSeriesChartOptions<T = unknown> {
   selectOn?: "hover" | "press";
   valueText?: (selection: ChartSelection<T>) => string;
   emptyMessage?: string;
+  /**
+   * Rows of time periods under the plot, below the time labels, on the plot's time scale.
+   * Each adds 22 px to the drawn height (plus one 6 px gap): see `chartTotalHeight`.
+   * Lanes, bands and markers never extend the domain.
+   */
+  lanes?: ChartLane[];
+  /** Shaded time ranges inside the plot, behind the gridlines and series. Not data: a chart with only bands is empty. */
+  bands?: ChartBand[];
+  /** Vertical time markers across the plot and the lanes. */
+  markers?: ChartMarker[];
 }
 
 export interface ChartSelection<T = unknown> {
   t: number;
   x: number;
-  /** Index into `model.selectable` (the nearest one when the selected time has no value here). */
+  /** Index into `model.selectable` (the nearest one when the selected time has no value here); into `model.steps` on a chart with lanes. */
   index: number;
   followsNow: boolean;
   /**
@@ -670,12 +825,28 @@ export interface ChartSelection<T = unknown> {
    * tolerance (the containing interval, else maxGapMs/2 or intervalMs/2).
    */
   values: { series: ChartSeries<T>; point?: ChartPoint<T>; y?: number }[];
+  /**
+   * One entry per lane: the period at the selection, if any. For a selected interval (bar or
+   * step) it is the period that overlaps `range` most (the later one on a tie); otherwise, and
+   * while following now, the period that contains the time (start inclusive, end exclusive).
+   * Of overlapping periods the last one, drawn on top, wins.
+   */
+  periods: { lane: ChartLane; period?: ChartPeriod }[];
+  /**
+   * Only on a chart with lanes, whose selection is a time rather than a series point: the time
+   * range the selection stands for. A selected interval is `[start, end)`; a single time
+   * (a line chart's step, or now while following it) has `start === end`.
+   */
+  range?: { start: number; end: number };
 }
 
 export interface ChartModel<T = unknown> {
   empty: boolean;
   width: number;
+  /** The plot-area height (`chartHeight`): the chart without its lanes. */
   height: number;
+  /** The drawn height, lanes included (`chartTotalHeight`): what the SVG and its state blocks use. */
+  totalHeight: number;
   plot: { left: number; right: number; top: number; bottom: number };
   x: LinearScale;
   y: { primary: LinearScale; secondary?: LinearScale };
@@ -690,9 +861,29 @@ export interface ChartModel<T = unknown> {
   }[];
   now?: { x: number };
   extremes: { x: number; y: number; text: "H" | "L" }[];
+  /** Lane rows under the chart, top to bottom; empty without lanes. `y` is the top of the 22 px row. */
+  lanes: {
+    lane: ChartLane;
+    y: number;
+    track: { x: number; y: number; width: number; height: number };
+    /** Text-anchor start, vertically centred on the track. `room` is the width reserved for it up to the chart's right edge. */
+    label: { x: number; y: number; text: string; room: number };
+    periods: { period: ChartPeriod; tone: ChartPeriodTone; x: number; width: number }[];
+    marker?: { x: number };
+  }[];
+  /** Shaded ranges clipped to the domain, spanning plot.top..plot.bottom. */
+  bands: { band: ChartBand; x: number; width: number; label?: { x: number; y: number; text: string } }[];
+  markers: { marker: ChartMarker; x: number; label?: { x: number; y: number; text: string; anchor: "start" | "end" } }[];
   selection?: ChartSelection<T>;
-  /** Index space for slider/keyboard (primary series, finite values). */
+  /** Index space for slider/keyboard (primary series, finite values). With lanes it is `steps` instead. */
   selectable: ChartPoint<T>[];
+  /**
+   * Only on a chart with lanes: every selectable time across the whole domain, ascending, and the
+   * index space of the slider (`selection.index`). For an interval series these are its points'
+   * interval starts plus interval-sized slots over the hours without data; for a line series its
+   * sample times, evenly spaced steps where it has no samples, period boundaries and lane markers.
+   */
+  steps?: number[];
   /** The series `selectable` comes from. */
   selectableSeries?: ChartSeries<T>;
   /** True when that series has interval semantics (step or bar): pointer and keyboard snap to intervals. */
@@ -709,6 +900,74 @@ export function chartSeriesColor(series: Pick<ChartSeries, "color" | "emphasis">
   return series.color || (series.emphasis === "secondary" ? SERIES_2 : SERIES_1);
 }
 
+const PERIOD_PLANNED = `var(--family-chart-period-planned, color-mix(in srgb, ${SERIES_1} 75%, transparent))`;
+const PERIOD_COLORS: Record<ChartPeriodTone, string> = {
+  planned: PERIOD_PLANNED,
+  active: "var(--family-chart-period-active, var(--family-success, var(--success-color, #43a047)))",
+  // 46 % of the planned colour (itself 75 %) is about 35 % of the series colour, and follows an overridden planned colour.
+  extra: `var(--family-chart-period-extra, color-mix(in srgb, ${PERIOD_PLANNED} 46%, transparent))`,
+  warning: "var(--family-chart-period-warning, var(--family-warning, var(--warning-color, #ff9800)))",
+  muted: "var(--family-chart-period-muted, color-mix(in srgb, var(--primary-text-color) 22%, transparent))",
+};
+
+/** The tone a period is drawn and read with: `muted` on a muted lane, else its own, default `planned`. */
+export function chartPeriodTone(lane: Pick<ChartLane, "muted">, period: Pick<ChartPeriod, "tone">): ChartPeriodTone {
+  return lane.muted ? "muted" : period.tone && period.tone in PERIOD_COLORS ? period.tone : "planned";
+}
+
+const SAFE_COLOR = /^(?:[a-z]{3,32}|#[0-9a-f]{3,8}|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|var)\([-\w\s.,%/#()+*]*\))$/i;
+
+/**
+ * A caller's colour as it may go into a `style` attribute: a named colour, `#hex`, or an
+ * `rgb()`, `hsl()`, `color-mix()`, `var()` (and similar) function with balanced brackets.
+ * Anything else, such as a value with `;`, braces, quotes, angle brackets or `url(`, is
+ * `undefined`, so one colour can never add a declaration or load a resource.
+ */
+export function chartSafeColor(color: unknown): string | undefined {
+  if (typeof color !== "string") return undefined;
+  const value = color.trim();
+  if (!value || value.length > 200 || !SAFE_COLOR.test(value) || /url\s*\(/i.test(value)) return undefined;
+  let depth = 0;
+  for (const character of value) {
+    if (character === "(") depth++;
+    else if (character === ")" && --depth < 0) return undefined;
+  }
+  return depth === 0 ? value : undefined;
+}
+
+/**
+ * The CSS colour of a period tone: `color` when given and safe (`chartSafeColor`), else
+ * `--family-chart-period-{tone}` with its family default.
+ */
+export function chartPeriodColor(tone: ChartPeriodTone = "planned", color?: string): string {
+  return chartSafeColor(color) || PERIOD_COLORS[tone] || PERIOD_COLORS.planned;
+}
+
+/**
+ * What a period reads in the period line, aria text and description: "{lane.label} {period.label}"
+ * (the tone stands in for a missing label). On a muted lane it is "{lane.label} {lane.mutedLabel}",
+ * or without a muted label "{lane.label} {period.label} (paused)".
+ */
+export function chartPeriodText(
+  lane: Pick<ChartLane, "label" | "muted" | "mutedLabel">,
+  period: Pick<ChartPeriod, "label" | "tone">,
+): string {
+  const own = period.label || chartPeriodTone({}, period);
+  const text = lane.muted ? lane.mutedLabel || `${own} (paused)` : own;
+  return `${lane.label ?? ""} ${text}`.trim();
+}
+
+/**
+ * Lane label as drawn: at most `CHART_LANE_LABEL_CHARS` characters, the last one an ellipsis when
+ * cut. Counted in user-perceived characters, so an emoji or an accented letter is never split.
+ */
+export function chartLaneLabel(label: string): string {
+  const characters = graphemes(String(label ?? ""));
+  return characters.length > CHART_LANE_LABEL_CHARS
+    ? `${characters.slice(0, CHART_LANE_LABEL_CHARS - 1).join("")}…`
+    : characters.join("");
+}
+
 /** True for series drawn with interval semantics: step lines and bars (layout requires their intervalMs). */
 const usesIntervals = (series: ChartSeries<any>): boolean => series.kind === "bar" || series.curve === "step";
 
@@ -718,14 +977,22 @@ const usesIntervals = (series: ChartSeries<any>): boolean => series.kind === "ba
  * unless an explicit gap (`null`) is at least as close: that time has no value.
  * `points` are in time order and may include gaps.
  */
-function pointNear<T>(series: ChartSeries<T>, points: ChartPoint<T>[], time: number): ChartPoint<T> | undefined {
+function pointNear<T>(
+  series: ChartSeries<T>,
+  points: ChartPoint<T>[],
+  time: number,
+  /** Reach of a line series that sets neither maxGapMs nor intervalMs (a chart with lanes passes its step spacing). */
+  fallbackToleranceMs: number = Infinity,
+): ChartPoint<T> | undefined {
   const finite = points.filter((point) => isValue(point.v));
   if (usesIntervals(series)) {
     const at = finite[indexAtTime(finite, time)];
     return at && time >= at.t && time < at.t + (series.intervalMs as number) ? at : undefined;
   }
   const at = finite[nearestIndex(finite, time)];
-  const tolerance = (series.maxGapMs ?? series.intervalMs ?? Infinity) / 2;
+  const tolerance = series.maxGapMs !== undefined || series.intervalMs !== undefined
+    ? (series.maxGapMs ?? series.intervalMs ?? Infinity) / 2
+    : fallbackToleranceMs;
   if (!at || Math.abs(at.t - time) > tolerance) return undefined;
   const distance = Math.abs(at.t - time);
   return points.some((point) => !isValue(point.v) && Math.abs(point.t - time) <= distance) ? undefined : at;
@@ -739,6 +1006,63 @@ function longestLabel(labels: string[]): number {
   return Math.max(0, ...labels.map((label) => estimateLabelWidth(label)));
 }
 
+/** More selectable times than this are never generated for the hours without data. */
+const MAX_FILL_STEPS = 1500;
+
+/**
+ * Selectable interval starts across the whole domain for a chart with lanes: every point of
+ * the interval series, and interval-sized slots over the time it has no point for. A gap is
+ * filled on the grid of the point that follows it, the time after the last point on its own.
+ */
+function intervalSteps(points: { t: number }[], intervalMs: number, domain: ChartDomain): number[] {
+  const steps: number[] = [];
+  const push = (t: number): void => {
+    if (!steps.length || t > steps[steps.length - 1]) steps.push(t);
+  };
+  const fill = (domain.end - domain.start) / intervalMs <= MAX_FILL_STEPS;
+  let cursor = domain.start;
+  for (const point of points) {
+    if (fill && point.t > cursor) {
+      for (let slots = Math.ceil((point.t - cursor) / intervalMs - 1e-9); slots >= 1; slots--) {
+        push(Math.max(cursor, point.t - slots * intervalMs));
+      }
+    }
+    push(point.t);
+    cursor = Math.max(cursor, point.t + intervalMs);
+  }
+  if (fill) for (let t = cursor; t < domain.end; t += intervalMs) push(t);
+  return steps;
+}
+
+/**
+ * Selectable times across the whole domain for a line chart with lanes: its sample times,
+ * steps at the samples' usual spacing where it has none, the domain ends and `extras`
+ * (period boundaries and lane markers). `spacing` is that usual spacing.
+ */
+function timeSteps(points: { t: number }[], domain: ChartDomain, extras: number[]): { steps: number[]; spacing: number } {
+  const span = domain.end - domain.start;
+  const times = points.map((point) => point.t);
+  const deltas = times.slice(1).map((t, index) => t - times[index]).filter((delta) => delta > 0).sort((a, b) => a - b);
+  const spacing = Math.max(1, span / MAX_FILL_STEPS, deltas.length ? deltas[Math.floor(deltas.length / 2)] : span / 24);
+  const set = new Set<number>(times);
+  const forward = (from: number, to: number): void => {
+    for (let t = from + spacing; t < to - spacing / 2; t += spacing) set.add(Math.round(t));
+  };
+  if (times.length) {
+    for (let t = times[0] - spacing; t > domain.start + spacing / 2; t -= spacing) set.add(Math.round(t));
+    times.slice(1).forEach((t, index) => {
+      if (t - times[index] > spacing * 1.5) forward(times[index], t);
+    });
+    forward(times[times.length - 1], domain.end);
+  } else {
+    forward(domain.start, domain.end);
+  }
+  for (const t of [domain.start, domain.end, ...extras]) {
+    if (Number.isFinite(t) && t >= domain.start && t <= domain.end) set.add(t);
+  }
+  return { steps: [...set].sort((a, b) => a - b), spacing };
+}
+
 /** Pure: all geometry for a given width/selection/now. Unit-tested without a DOM. */
 export function layoutTimeSeriesChart<T>(
   options: TimeSeriesChartOptions<T>,
@@ -746,6 +1070,8 @@ export function layoutTimeSeriesChart<T>(
 ): ChartModel<T> {
   const width = Math.max(MIN_WIDTH, Math.round(state.width) || 0);
   const height = chartHeight(options.height);
+  const laneOptions = options.lanes ?? [];
+  const totalHeight = chartTotalHeight(options.height, laneOptions.length);
   const lines = lineCount(options.lines ?? 5);
   const timeLabel = options.timeLabel ?? defaultChartTimeLabel(options.hass);
   for (const series of options.series) {
@@ -805,9 +1131,18 @@ export function layoutTimeSeriesChart<T>(
     : undefined;
   const axisWidth = (labels: string[]) =>
     Math.max(CHART_MARGIN.minAxis, longestLabel(labels) + CHART_AXIS_GAP_PX);
+  // Lane labels share the right gutter with the primary axis labels: it fits the longest of
+  // both, and exists for the lane labels alone when the primary axis shows none.
+  // Lane labels are sized by character class: capitals, CJK and emoji are wider than the
+  // axis labels' digits, and a clipped car name is worse than a slightly wider gutter.
+  const laneTexts = laneOptions.map((lane) => chartLaneLabel(lane.label));
+  const laneGutter = laneTexts.some(Boolean)
+    ? Math.max(CHART_MARGIN.minAxis, Math.max(...laneTexts.map((text) => estimateTextWidth(text))) + CHART_AXIS_GAP_PX)
+    : 0;
+  const rightGutter = Math.max(primaryLabelled ? axisWidth(primaryTexts) : CHART_MARGIN.edge, laneGutter);
   const plot = {
     left: secondaryTexts ? axisWidth(secondaryTexts) : CHART_MARGIN.edge,
-    right: width - (empty ? CHART_MARGIN.minAxis : primaryLabelled ? axisWidth(primaryTexts) : CHART_MARGIN.edge),
+    right: width - (empty ? CHART_MARGIN.minAxis : rightGutter),
     top: CHART_MARGIN.top,
     bottom: height - CHART_MARGIN.bottom,
   };
@@ -823,6 +1158,7 @@ export function layoutTimeSeriesChart<T>(
   const base = {
     width,
     height,
+    totalHeight,
     plot,
     x,
     y: { primary: yPrimary, secondary: ySecondary },
@@ -837,6 +1173,9 @@ export function layoutTimeSeriesChart<T>(
       ticks: [],
       series: [],
       extremes: [],
+      lanes: [],
+      bands: [],
+      markers: [],
       selectable: [],
       intervalSelection: false,
       hasGaps: false,
@@ -949,6 +1288,78 @@ export function layoutTimeSeriesChart<T>(
     return entry;
   });
 
+  // Periods, bands and markers ride on the plot's time scale; they never widen the domain.
+  const plotWidth = Math.max(0, plot.right - plot.left);
+  const lanes: ChartModel<T>["lanes"] = laneOptions.map((lane, row) => {
+    const y = height + CHART_LANES_GAP_PX + row * CHART_LANE_PX;
+    const track = { x: plot.left, y: y + (CHART_LANE_PX - CHART_LANE_TRACK_PX) / 2, width: plotWidth, height: CHART_LANE_TRACK_PX };
+    const periods = (lane.periods ?? []).flatMap((period) => {
+      const start = Math.max(period.start, domain.start);
+      const end = Math.min(period.end, domain.end);
+      if (!(end > start)) return [];
+      const periodWidth = Math.min(plotWidth, Math.max(CHART_PERIOD_MIN_PX, x(end) - x(start)));
+      // The minimum width must not push a period at the end of the window past the track.
+      return [{ period, tone: chartPeriodTone(lane, period), x: clamp(x(start), plot.left, plot.left + plotWidth - periodWidth), width: periodWidth }];
+    });
+    const markerT = lane.marker?.t;
+    // The longest axis label starts at the same x: lane labels line up with the axis column.
+    const labelX = plot.right + CHART_AXIS_GAP_PX - 2;
+    return {
+      lane,
+      y,
+      track,
+      label: { x: labelX, y: y + CHART_LANE_PX / 2, text: laneTexts[row], room: Math.max(0, width - labelX) },
+      periods,
+      marker: isValue(markerT) && markerT >= domain.start && markerT <= domain.end ? { x: x(markerT) } : undefined,
+    };
+  });
+  const bands: ChartModel<T>["bands"] = (options.bands ?? []).flatMap((band) => {
+    const start = Math.max(band.start, domain.start);
+    const end = Math.min(band.end, domain.end);
+    if (!(end > start)) return [];
+    const bandX = x(start);
+    const bandWidth = Math.max(0, Math.min(x(end), plot.left + plotWidth) - bandX);
+    // The expected width, not the reserve: a label that fits a phone-width band should show.
+    const fits = !!band.label && bandWidth >= estimateTextWidth(band.label, "typical") + CHART_LABEL_GAP_PX;
+    return [{
+      band,
+      x: bandX,
+      width: bandWidth,
+      label: fits ? { x: bandX + CHART_LABEL_GAP_PX / 2, y: plot.top + 8, text: band.label as string } : undefined,
+    }];
+  });
+  // Marker labels sit in the top margin, clear of the bars and of a band label. They are placed
+  // in time order, each on the side away from the nearer plot edge; a label that would leave
+  // the plot (the gutters hold the top axis labels at almost the same height) or come within
+  // 8 px of an earlier one tries the other side and is dropped otherwise.
+  const placedLabels: [number, number][] = [];
+  const markers: ChartModel<T>["markers"] = (options.markers ?? [])
+    .map((marker, order) => ({ marker, order }))
+    .filter(({ marker }) => isValue(marker.t) && marker.t >= domain.start && marker.t <= domain.end)
+    .sort((a, b) => a.marker.t - b.marker.t || a.order - b.order)
+    .map(({ marker, order }) => {
+      const markerX = x(marker.t);
+      let label: ChartModel<T>["markers"][number]["label"];
+      if (marker.label) {
+        const labelWidth = estimateTextWidth(marker.label);
+        const preferred: "start" | "end" = markerX - plot.left <= plot.right - markerX ? "start" : "end";
+        for (const anchor of [preferred, preferred === "start" ? "end" : "start"] as const) {
+          const from = anchor === "start" ? markerX + 4 : markerX - 4 - labelWidth;
+          const to = from + labelWidth;
+          const free = placedLabels.every(([left, right]) => to + CHART_LABEL_GAP_PX <= left || from >= right + CHART_LABEL_GAP_PX);
+          if (from >= plot.left && to <= plot.right && free) {
+            placedLabels.push([from, to]);
+            label = { x: anchor === "start" ? from : to, y: CHART_MARGIN.top - 7, text: marker.label, anchor };
+            break;
+          }
+        }
+      }
+      return { order, entry: { marker, x: markerX, label } };
+    })
+    // Back in the caller's order: it is the draw order.
+    .sort((a, b) => a.order - b.order)
+    .map(({ entry }) => entry);
+
   // The slider walks the first primary-axis series with data; any series with data is the fallback.
   const selectableEntry = visible.find(
     ({ series, points }) => !onSecondary(series) && points.some((point) => isValue(point.v)),
@@ -961,38 +1372,123 @@ export function layoutTimeSeriesChart<T>(
   let index: number;
   let selectionT: number;
   let selectionX: number;
-  /** False when a synced chart picked a time this chart has no value for. */
-  let matched = true;
-  if (!followsNow) {
-    const selectedT = state.selectedT as number;
-    index = intervalSelection ? indexAtTime(selectable, selectedT) : nearestIndex(selectable, selectedT);
-    if (pointNear(selectableSeries, selectableEntry?.points ?? [], selectedT) === selectable[index]) {
+  let selectedPoint: ChartPoint<T> | undefined;
+  /** The times the other series are read at: intervals by the interval that contains it, lines by the sample near it. */
+  let intervalT: number;
+  let lineT: number;
+  /** Reach of a line series without maxGapMs or intervalMs; unlimited as in 1.7.0 unless the chart has lanes. */
+  let lineReach = Infinity;
+  /** Chart with lanes: selectable times across the whole domain, and the time range the selection stands for. */
+  let steps: number[] | undefined;
+  let range: { start: number; end: number } | undefined;
+  let outsideWindow = false;
+  if (!laneOptions.length) {
+    /** False when a synced chart picked a time this chart has no value for. */
+    let matched = true;
+    if (!followsNow) {
+      const selectedT = state.selectedT as number;
+      index = intervalSelection ? indexAtTime(selectable, selectedT) : nearestIndex(selectable, selectedT);
+      if (pointNear(selectableSeries, selectableEntry?.points ?? [], selectedT) === selectable[index]) {
+        selectionT = selectable[index].t;
+        selectionX = anchorX(selectableSeries, selectable[index]);
+      } else {
+        // Another chart in the selection group picked a time without a value here: the cursor
+        // stays on that time and shows no value instead of claiming a different hour.
+        matched = false;
+        selectionT = selectedT;
+        selectionX = x(clamp(selectedT, domain.start, domain.end));
+      }
+    } else if (now < domain.start || now > domain.end) {
+      // Outside the window, the nearest end of the data stands in for now.
+      index = now < domain.start ? 0 : selectable.length - 1;
       selectionT = selectable[index].t;
       selectionX = anchorX(selectableSeries, selectable[index]);
+    } else if (intervalSelection) {
+      index = indexAtTime(selectable, now);
+      const point = selectable[index];
+      const containsNow = now >= point.t && now < point.t + (selectableSeries.intervalMs as number);
+      selectionT = containsNow ? now : point.t;
+      selectionX = containsNow ? x(now) : anchorX(selectableSeries, point);
     } else {
-      // Another chart in the selection group picked a time without a value here: the cursor
-      // stays on that time and shows no value instead of claiming a different hour.
-      matched = false;
-      selectionT = selectedT;
-      selectionX = x(clamp(selectedT, domain.start, domain.end));
+      index = nearestIndex(selectable, now);
+      selectionT = selectable[index].t;
+      selectionX = x(selectionT);
     }
-  } else if (now < domain.start || now > domain.end) {
-    // Outside the window, the nearest end of the data stands in for now.
-    index = now < domain.start ? 0 : selectable.length - 1;
-    selectionT = selectable[index].t;
-    selectionX = anchorX(selectableSeries, selectable[index]);
-  } else if (intervalSelection) {
-    index = indexAtTime(selectable, now);
-    const point = selectable[index];
-    const containsNow = now >= point.t && now < point.t + (selectableSeries.intervalMs as number);
-    selectionT = containsNow ? now : point.t;
-    selectionX = containsNow ? x(now) : anchorX(selectableSeries, point);
+    selectedPoint = matched ? selectable[index] : undefined;
+    intervalT = selectionT;
+    lineT = selectedPoint?.t ?? selectionT;
   } else {
-    index = nearestIndex(selectable, now);
-    selectionT = selectable[index].t;
-    selectionX = x(selectionT);
+    // With lanes the plan usually runs past the data (tomorrow's prices are not published yet),
+    // so the selection is a time anywhere in the domain, not a series point: the cursor can
+    // stand on an hour without a value, which then reads "–" beside the lanes' periods.
+    const selectablePoints = selectableEntry?.points ?? [];
+    const target = followsNow ? now : (state.selectedT as number);
+    const intervalMs = selectableSeries.intervalMs as number;
+    if (intervalSelection) {
+      steps = intervalSteps(selectable, intervalMs, domain);
+      lineReach = intervalMs / 2;
+    } else {
+      const built = timeSteps(
+        selectable,
+        domain,
+        lanes.flatMap(({ lane, periods }) => [
+          ...periods.flatMap(({ period }) => [Math.max(period.start, domain.start), Math.min(period.end, domain.end)]),
+          ...(isValue(lane.marker?.t) ? [lane.marker?.t as number] : []),
+        ]),
+      );
+      steps = built.steps;
+      lineReach = built.spacing / 2;
+    }
+    const last = steps.length - 1;
+    // A first interval that began before the window is still inside it.
+    const outside = target < Math.min(domain.start, steps[0])
+      || (intervalSelection ? target >= domain.end : target > domain.end);
+    if (!followsNow && outside) {
+      // A time picked in a wider chart of the selection group: as in 1.7.0 the cursor stops at the edge and reads nothing.
+      index = target < domain.start ? 0 : last;
+      selectionT = target;
+      selectionX = x(clamp(target, domain.start, domain.end));
+      intervalT = lineT = target;
+      range = { start: target, end: target };
+      outsideWindow = true;
+    } else if (intervalSelection) {
+      index = target < steps[0] ? 0 : outside ? last : indexAtTime(steps.map((t) => ({ t })), target);
+      const start = steps[index];
+      const end = Math.min(start + intervalMs, steps[index + 1] ?? Infinity, domain.end);
+      // Following now inside the window reads the exact now; a picked interval reads as a whole.
+      const exact = followsNow && !outside;
+      selectionT = exact ? now : start;
+      selectionX = exact ? x(now) : x((Math.max(start, domain.start) + end) / 2);
+      intervalT = selectionT;
+      lineT = start;
+      range = exact ? { start: now, end: now } : { start, end };
+      selectedPoint = pointNear(selectableSeries, selectablePoints, intervalT);
+    } else {
+      index = nearestIndex(steps.map((t) => ({ t })), clamp(target, domain.start, domain.end));
+      selectionT = steps[index];
+      selectionX = x(selectionT);
+      intervalT = lineT = selectionT;
+      range = { start: selectionT, end: selectionT };
+      selectedPoint = pointNear(selectableSeries, selectablePoints, selectionT, lineReach);
+    }
   }
-  const selectedPoint = matched ? selectable[index] : undefined;
+
+  /** The period a lane shows for the selection: see `ChartSelection.periods`. Later periods win ties, as they are drawn on top. */
+  const periodAt = (periods: ChartModel<T>["lanes"][number]["periods"]): ChartPeriod | undefined => {
+    if (!range || outsideWindow) return undefined;
+    let best: ChartPeriod | undefined;
+    let bestOverlap = 0;
+    for (const { period } of periods) {
+      const overlap = range.end > range.start
+        ? Math.min(period.end, range.end) - Math.max(period.start, range.start)
+        : range.start >= period.start && range.start < period.end ? 1 : 0;
+      if (overlap > 0 && overlap >= bestOverlap) {
+        best = period;
+        bestOverlap = overlap;
+      }
+    }
+    return best;
+  };
   const selection: ChartSelection<T> = {
     t: selectionT,
     x: selectionX,
@@ -1003,10 +1499,12 @@ export function layoutTimeSeriesChart<T>(
       if (series === selectableSeries) point = selectedPoint;
       else {
         // Lines match the selected sample; intervals the interval that contains the selected time.
-        point = pointNear(series, points, usesIntervals(series) ? selectionT : selectedPoint?.t ?? selectionT);
+        point = pointNear(series, points, usesIntervals(series) ? intervalT : lineT, lineReach);
       }
       return point ? { series, point, y: plotY(yFor(series), point.v as number) } : { series };
     }),
+    periods: lanes.map(({ lane, periods }) => ({ lane, period: periodAt(periods) })),
+    ...(range ? { range } : {}),
   };
 
   const nowX = x(now);
@@ -1023,10 +1521,14 @@ export function layoutTimeSeriesChart<T>(
     series: laidOut,
     now: showNow ? { x: nowX } : undefined,
     extremes: extremeMarks,
+    lanes,
+    bands,
+    markers,
     selection,
     selectable,
     selectableSeries,
     intervalSelection,
     hasGaps,
+    ...(steps ? { steps } : {}),
   };
 }

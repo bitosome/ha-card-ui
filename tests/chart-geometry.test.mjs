@@ -7,7 +7,22 @@ const {
   CHART_AXIS_GAP_PX,
   CHART_MARGIN,
   CHART_FRAME_CHROME_PX,
+  CHART_LANE_PX,
+  CHART_LANES_GAP_PX,
+  CHART_LANE_TRACK_PX,
+  CHART_PERIOD_MIN_PX,
+  CHART_LANE_LABEL_CHARS,
+  CHART_PERIOD_ACTIVE_PX,
+  CHART_PERIOD_LINE_PX,
   DEFAULT_TICK_STEPS_MS,
+  chartHeight,
+  chartTotalHeight,
+  chartPeriodTone,
+  chartPeriodColor,
+  chartPeriodText,
+  chartSafeColor,
+  chartLaneLabel,
+  estimateTextWidth,
   linearScale,
   niceStep,
   stepDecimals,
@@ -738,4 +753,681 @@ test("layout: the model names the selectable series; bars and steps without an i
     () => layoutTimeSeriesChart(priceOptions({ series: [priceSeries({ intervalMs: 0 })] }), { width: 360, now: 0 }),
     /needs intervalMs for a step series/,
   );
+});
+
+// ---------------------------------------------------------------- 1.8.0: lanes, bands, markers
+
+/** Six hourly price bars from midnight in a fixed 6-hour window, 360 px wide: plot 8…307.4, 49.9 px per hour. */
+const planChart = (overrides = {}) => ({
+  id: "plan",
+  label: "Price and plan",
+  height: 190,
+  hass: GB,
+  domain: { start: MIDNIGHT, end: MIDNIGHT + 6 * HOUR },
+  axes: { primary: { includeZero: true, format: (value) => formatHassNumber(GB, value, { digits: 2, unit: "€" }) } },
+  series: [{
+    id: "price",
+    label: "Price",
+    kind: "bar",
+    intervalMs: HOUR,
+    points: [-0.05, 0.1, 0.15, 0.25, 0.3, 0.2].map((v, hour) => ({ t: MIDNIGHT + hour * HOUR, v })),
+    format: String,
+  }],
+  ...overrides,
+});
+const layoutPlan = (overrides, state = {}) =>
+  layoutTimeSeriesChart(planChart(overrides), { width: 360, now: MIDNIGHT + 2.5 * HOUR, ...state });
+const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-6, `${message ?? ""} ${actual} != ${expected}`);
+
+test("chartTotalHeight adds 22 px per lane and one 6 px gap", () => {
+  assert.equal(CHART_LANE_PX, 22);
+  assert.equal(CHART_LANES_GAP_PX, 6);
+  assert.equal(CHART_LANE_TRACK_PX, 10);
+  assert.equal(CHART_PERIOD_MIN_PX, 3);
+  assert.equal(CHART_LANE_LABEL_CHARS, 8);
+  assert.equal(CHART_PERIOD_ACTIVE_PX, 12);
+  assert.equal(CHART_PERIOD_LINE_PX, 23, "an 18 px line and the 5 px frame gap");
+  assert.equal(chartTotalHeight(190, 0), 190);
+  assert.equal(chartTotalHeight(190), 190, "no lanes: the chart height");
+  assert.equal(chartTotalHeight(190, 1), 218);
+  assert.equal(chartTotalHeight(190, 2), 240);
+  assert.equal(chartTotalHeight(40, 2), chartHeight(40) + 50, "the chart part is clamped like chartHeight");
+  assert.equal(chartTotalHeight(900, 3), 360 + 72);
+  assert.equal(chartTotalHeight(190, -1), 190);
+  // Only whole lanes count: a fractional count is cut down, never rounded up to a row that is not drawn.
+  assert.equal(chartTotalHeight(190, 1.9), 218);
+  assert.equal(chartTotalHeight(190, 2.5), 240);
+  assert.equal(chartTotalHeight(190, 0.9), 190);
+  assert.equal(chartTotalHeight(190, Number.NaN), 190);
+});
+
+test("a chart without lanes, bands or markers keeps its 1.7.0 geometry", () => {
+  const plain = layoutPlan();
+  assert.equal(plain.height, 190);
+  assert.equal(plain.totalHeight, 190);
+  assert.deepEqual(plain.lanes, []);
+  assert.deepEqual(plain.bands, []);
+  assert.deepEqual(plain.markers, []);
+  assert.deepEqual(plain.selection.periods, []);
+  // The selection walks the series points as before: no time steps, no range.
+  assert.equal(plain.steps, undefined);
+  assert.equal("steps" in plain, false);
+  assert.deepEqual(Object.keys(plain.selection), ["t", "x", "index", "followsNow", "values", "periods"]);
+  // Lanes add rows under the chart; the plot, the scales and the time ticks do not move.
+  const lanes = layoutPlan({ lanes: [{ id: "a", label: "A", periods: [] }, { id: "b", label: "B", periods: [] }] });
+  assert.equal(lanes.height, 190);
+  assert.equal(lanes.totalHeight, 240);
+  assert.deepEqual(lanes.plot, plain.plot);
+  assert.deepEqual(lanes.gridY, plain.gridY);
+  assert.deepEqual(lanes.ticks, plain.ticks);
+  assert.deepEqual(lanes.x.domain, plain.x.domain);
+});
+
+test("lanes are 22 px rows under the chart with a 10 px track over the plot width", () => {
+  const model = layoutPlan({
+    lanes: [
+      { id: "xc40", label: "XC40", periods: [{ start: MIDNIGHT + HOUR, end: MIDNIGHT + 3 * HOUR }] },
+      { id: "ex30", label: "EX30", periods: [], muted: true },
+    ],
+  });
+  const { plot } = model;
+  assert.deepEqual(model.lanes.map((lane) => lane.y), [196, 218], "6 px under the chart height, then 22 px each");
+  assert.deepEqual(model.lanes[0].track, { x: plot.left, y: 202, width: plot.right - plot.left, height: 10 });
+  assert.deepEqual(model.lanes[1].track, { x: plot.left, y: 224, width: plot.right - plot.left, height: 10 });
+  assert.equal(model.lanes[0].lane.id, "xc40");
+  // The label starts where the longest axis label starts, centred on the track.
+  const labelX = plot.right + CHART_AXIS_GAP_PX - 2;
+  assert.deepEqual(model.lanes[0].label, { x: labelX, y: 207, text: "XC40", room: 360 - labelX });
+  assert.equal(model.lanes[1].label.y, 229);
+  assert.equal(model.lanes[0].label.y, model.lanes[0].track.y + model.lanes[0].track.height / 2);
+  const [period] = model.lanes[0].periods;
+  assert.equal(period.tone, "planned", "the default tone");
+  near(period.x, model.x(MIDNIGHT + HOUR));
+  near(period.width, model.x(MIDNIGHT + 3 * HOUR) - model.x(MIDNIGHT + HOUR));
+  assert.deepEqual(model.lanes[1].periods, []);
+  assert.equal(model.lanes[0].marker, undefined);
+});
+
+test("periods are clipped to the domain, dropped outside it and never narrower than 3 px", () => {
+  const periods = [
+    { start: MIDNIGHT - 2 * HOUR, end: MIDNIGHT + HOUR, tone: "active" },            // clipped at the start
+    { start: MIDNIGHT + 5 * HOUR, end: MIDNIGHT + 9 * HOUR, tone: "extra" },         // clipped at the end
+    { start: MIDNIGHT - 3 * HOUR, end: MIDNIGHT - HOUR },                            // before the window
+    { start: MIDNIGHT + 6 * HOUR, end: MIDNIGHT + 7 * HOUR },                        // starts at the end: nothing left
+    { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 2 * HOUR },                        // empty
+    { start: MIDNIGHT + 3 * HOUR, end: MIDNIGHT + 2 * HOUR },                        // reversed
+    { start: Number.NaN, end: MIDNIGHT + 2 * HOUR },                                 // not a time
+    { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 2 * HOUR + 60_000, tone: "warning" }, // one minute: 0.83 px
+    { start: MIDNIGHT + 6 * HOUR - 60_000, end: MIDNIGHT + 6 * HOUR, color: "teal" },   // one minute at the very end
+  ];
+  const model = layoutPlan({ lanes: [{ id: "car", label: "Car", periods }] });
+  const { plot } = model;
+  const laid = model.lanes[0].periods;
+  assert.deepEqual(laid.map((entry) => periods.indexOf(entry.period)), [0, 1, 7, 8], "the rest are dropped");
+  assert.deepEqual(laid.map((entry) => entry.tone), ["active", "extra", "warning", "planned"]);
+  near(laid[0].x, plot.left);
+  near(laid[0].width, model.x(MIDNIGHT + HOUR) - plot.left);
+  near(laid[1].x, model.x(MIDNIGHT + 5 * HOUR));
+  near(laid[1].x + laid[1].width, plot.right, "clipped at the domain end");
+  assert.equal(laid[2].width, 3, "minimum drawn width");
+  near(laid[2].x, model.x(MIDNIGHT + 2 * HOUR));
+  assert.equal(laid[3].width, 3);
+  near(laid[3].x + laid[3].width, plot.right, "the minimum width stays on the track");
+  assert.equal(laid[3].period.color, "teal");
+});
+
+test("a muted lane draws every period muted; tone helpers", () => {
+  const model = layoutPlan({
+    lanes: [{
+      id: "car", label: "Car", muted: true,
+      periods: [{ start: MIDNIGHT, end: MIDNIGHT + HOUR, tone: "active" }, { start: MIDNIGHT + HOUR, end: MIDNIGHT + 2 * HOUR }],
+    }],
+  });
+  assert.deepEqual(model.lanes[0].periods.map((entry) => entry.tone), ["muted", "muted"]);
+  assert.equal(chartPeriodTone({}, {}), "planned");
+  assert.equal(chartPeriodTone({}, { tone: "warning" }), "warning");
+  assert.equal(chartPeriodTone({ muted: true }, { tone: "active" }), "muted");
+  assert.equal(chartPeriodTone({}, { tone: "nonsense" }), "planned", "an unknown tone falls back");
+  assert.match(chartPeriodColor("planned"), /^var\(--family-chart-period-planned, color-mix\(in srgb, var\(--family-chart-series-1, var\(--family-active, var\(--primary-color\)\)\) 75%, transparent\)\)$/);
+  assert.equal(chartPeriodColor("active"), "var(--family-chart-period-active, var(--family-success, var(--success-color, #43a047)))");
+  assert.match(chartPeriodColor("extra"), /^var\(--family-chart-period-extra, color-mix\(in srgb, var\(--family-chart-period-planned, .* 46%, transparent\)\)$/);
+  assert.equal(chartPeriodColor("warning"), "var(--family-chart-period-warning, var(--family-warning, var(--warning-color, #ff9800)))");
+  assert.equal(chartPeriodColor("muted"), "var(--family-chart-period-muted, color-mix(in srgb, var(--primary-text-color) 22%, transparent))");
+  assert.equal(chartPeriodColor("active", "teal"), "teal", "an explicit colour wins");
+  assert.equal(chartPeriodColor(), chartPeriodColor("planned"));
+});
+
+test("a lane marker is laid out inside the domain and left out outside it", () => {
+  const lane = (t) => ({ id: `lane-${t}`, label: "Car", periods: [], marker: { t, label: "Ready by 07:00" } });
+  const model = layoutPlan({
+    lanes: [lane(MIDNIGHT + 4.5 * HOUR), lane(MIDNIGHT), lane(MIDNIGHT + 6 * HOUR), lane(MIDNIGHT - 1), lane(MIDNIGHT + 6 * HOUR + 1), lane(Number.NaN)],
+  });
+  near(model.lanes[0].marker.x, model.x(MIDNIGHT + 4.5 * HOUR));
+  near(model.lanes[1].marker.x, model.plot.left, "the domain start is inside");
+  near(model.lanes[2].marker.x, model.plot.right, "the domain end is inside");
+  assert.equal(model.lanes[3].marker, undefined);
+  assert.equal(model.lanes[4].marker, undefined);
+  assert.equal(model.lanes[5].marker, undefined);
+});
+
+test("estimateTextWidth sizes a label by character class", () => {
+  assert.equal(estimateTextWidth(""), 0);
+  assert.equal(estimateTextWidth("abc"), 18, "lowercase 6 px");
+  assert.equal(estimateTextWidth("ABC"), 7.6 * 3, "capitals 7.6 px");
+  assert.equal(estimateTextWidth("MW"), 20.8, "M and W 10.4 px");
+  assert.equal(estimateTextWidth("mw"), 19.6, "m and w 9.8 px");
+  assert.equal(estimateTextWidth("40"), 13.2, "digits 6.6 px");
+  assert.equal(estimateTextWidth(" .-"), 12, "spaces and punctuation 4 px");
+  assert.equal(estimateTextWidth("电动"), 24, "CJK 12 px");
+  assert.equal(estimateTextWidth("가Ａ"), 24, "Hangul and fullwidth forms too");
+  assert.equal(estimateTextWidth("🚗"), 14, "an emoji is one 14 px glyph");
+  assert.equal(estimateTextWidth("👨‍👩‍👧‍👦🇪🇪"), 28, "a ZWJ family and a flag are one glyph each");
+  assert.equal(estimateTextWidth("…"), 11);
+  assert.equal(estimateTextWidth("Š"), 7.6, "capitals outside ASCII");
+  // Capitals, CJK and emoji are much wider than the 5.8 px per character the axis labels use.
+  for (const label of ["MODEL Y", "WWWWWWWW", "电动汽车充电计划", "🚗🚙🚕🛻"]) {
+    assert.ok(estimateTextWidth(label) > estimateLabelWidth(label) * 1.2 || [...label].length < label.length, label);
+  }
+  assert.ok(Math.abs(estimateTextWidth("XC40") - 28.4) < 1e-9);
+  // `typical` is the expected width, for fit rules: about 5.2 px per character of lowercase text.
+  assert.ok(Math.abs(estimateTextWidth("no price yet", "typical") - 62.4) < 1e-9);
+  assert.ok(estimateTextWidth("no price yet", "typical") < estimateLabelWidth("no price yet"));
+  assert.ok(estimateTextWidth("Day tariff", "typical") < estimateTextWidth("Day tariff"));
+});
+
+test("the right gutter fits the longest lane label; long labels are cut to 8 characters by grapheme", () => {
+  assert.equal(chartLaneLabel("XC40"), "XC40");
+  assert.equal(chartLaneLabel("Garage 1"), "Garage 1", "8 characters fit");
+  assert.equal(chartLaneLabel("Volvo XC40 Recharge"), "Volvo X…");
+  assert.equal(chartLaneLabel("🚗🚙🚕🛻🚐🚌🚎🏎🚓"), "🚗🚙🚕🛻🚐🚌🚎…");
+  // A grapheme is never split: a flag is two code points, a family seven, an accent a combining mark.
+  assert.equal(chartLaneLabel("🇪🇪".repeat(9)), `${"🇪🇪".repeat(7)}…`);
+  assert.equal(chartLaneLabel("👨‍👩‍👧‍👦".repeat(9)), `${"👨‍👩‍👧‍👦".repeat(7)}…`);
+  assert.equal(chartLaneLabel("é".repeat(9)), `${"é".repeat(7)}…`);
+  assert.equal(chartLaneLabel("é".repeat(8)), "é".repeat(8), "8 accented letters are 8 characters");
+  assert.equal(chartLaneLabel(undefined), "");
+
+  // "0.30 €" sets the gutter of the plain chart; "XC40" (28.4 px) does not widen it.
+  const plain = layoutPlan();
+  const short = layoutPlan({ lanes: [{ id: "a", label: "XC40", periods: [] }] });
+  assert.equal(short.plot.right, plain.plot.right);
+  // A cut label is wider than the axis labels: the gutter grows to fit it.
+  const long = layoutPlan({ lanes: [{ id: "a", label: "Volvo XC40 Recharge", periods: [] }, { id: "b", label: "EX30", periods: [] }] });
+  assert.equal(long.lanes[0].label.text, "Volvo X…");
+  near(long.plot.right, 360 - (estimateTextWidth("Volvo X…") + CHART_AXIS_GAP_PX));
+  assert.ok(long.plot.right < plain.plot.right);
+  near(long.lanes[0].track.width, long.plot.right - long.plot.left, "the track follows the narrower plot");
+  assert.equal(long.lanes[1].label.x, long.lanes[0].label.x);
+  // Capitals, CJK and emoji get the room they need, not 5.8 px per character.
+  for (const label of ["MODEL Y", "WWWWWWWWWW", "电动汽车充电计划表格", "🚗🚙🚕🛻🚐🚌🚎🏎"]) {
+    const model = layoutPlan({ lanes: [{ id: "a", label, periods: [] }] });
+    const drawn = model.lanes[0].label;
+    assert.equal(drawn.text, chartLaneLabel(label));
+    near(drawn.room, 360 - drawn.x);
+    assert.ok(drawn.room >= estimateTextWidth(drawn.text), `${label}: ${drawn.room} px for ${estimateTextWidth(drawn.text)} px`);
+    assert.ok(drawn.room > estimateLabelWidth(drawn.text), "more than the per-character estimate");
+  }
+});
+
+test("lane labels get a gutter when the primary axis shows no labels", () => {
+  // Primary series without data next to a secondary one with data: no right axis labels (8 px edge).
+  const points = (values) => values.map((v, hour) => ({ t: MIDNIGHT + hour * HOUR, v }));
+  const options = (lanes) => planChart({
+    lanes,
+    series: [
+      { id: "power", label: "Power", points: points([null, null, null]), format: String },
+      { id: "current", label: "Current", axis: "secondary", points: points([1, 2, 3]), format: String },
+    ],
+    axes: { primary: { format: (value) => `${value} W` }, secondary: { format: (value) => `${value} A` } },
+  });
+  const layout = (lanes) => layoutTimeSeriesChart(options(lanes), { width: 360, now: MIDNIGHT });
+  const without = layout(undefined);
+  assert.deepEqual(without.axisLabels.primary, []);
+  assert.equal(without.plot.right, 360 - CHART_MARGIN.edge);
+  const short = layout([{ id: "a", label: "A", periods: [] }]);
+  assert.equal(short.plot.right, 360 - CHART_MARGIN.minAxis, "at least the minimum axis gutter");
+  const long = layout([{ id: "a", label: "Bedrooms", periods: [] }]);
+  near(long.plot.right, 360 - (estimateTextWidth("Bedrooms") + CHART_AXIS_GAP_PX));
+  assert.equal(long.lanes[0].label.x, long.plot.right + CHART_AXIS_GAP_PX - 2);
+  const unlabelled = layout([{ id: "a", label: "", periods: [] }]);
+  assert.equal(unlabelled.plot.right, 360 - CHART_MARGIN.edge, "nothing to fit");
+});
+
+test("a plot squeezed to nothing never gives a lane, a period or a band a negative width", () => {
+  const squeezed = (characters) => layoutTimeSeriesChart(planChart({
+    axes: { primary: { includeZero: true, format: () => "9".repeat(characters) } },
+    lanes: [{ id: "car", label: "Car", periods: [{ start: MIDNIGHT, end: MIDNIGHT + 6 * HOUR }, { start: MIDNIGHT + HOUR, end: MIDNIGHT + HOUR + 1 }] }],
+    bands: [{ start: MIDNIGHT, end: MIDNIGHT + 6 * HOUR }],
+  }), { width: 120, now: MIDNIGHT });
+  // 17 digits leave a 1.4 px plot: the 3 px minimum period width gives way to the plot width.
+  const narrow = squeezed(17);
+  const plotWidth = narrow.plot.right - narrow.plot.left;
+  assert.ok(plotWidth > 0 && plotWidth < 3, `plot ${plotWidth}`);
+  near(narrow.lanes[0].track.width, plotWidth);
+  for (const period of narrow.lanes[0].periods) {
+    near(period.width, plotWidth, "capped at the plot width");
+    assert.ok(period.x >= narrow.plot.left - 1e-9 && period.x + period.width <= narrow.plot.right + 1e-9);
+  }
+  // 20 digits push the right gutter past the left edge: everything collapses to zero, not below.
+  const gone = squeezed(20);
+  assert.ok(gone.plot.right < gone.plot.left);
+  assert.equal(gone.lanes[0].track.width, 0);
+  for (const period of gone.lanes[0].periods) assert.equal(period.width, 0);
+  assert.equal(gone.bands[0].width, 0);
+});
+
+test("chartSafeColor lets colours through and nothing that could add a declaration or load a resource", () => {
+  for (const color of ["red", "tomato", "currentColor", "#fff", "#12ab34", "#12ab34cc", "rgb(1, 2, 3)", "rgba(1,2,3,.5)", "hsl(120 50% 50% / 0.5)",
+    "var(--warning-color)", "var(--a, var(--b, #fff))", "color-mix(in srgb, var(--primary-color) 40%, transparent)", "oklch(60% 0.2 30)"]) {
+    assert.equal(chartSafeColor(color), color, color);
+  }
+  assert.equal(chartSafeColor("  teal "), "teal", "trimmed");
+  for (const color of ["red;background:url(x)", "red;position:fixed", "red; position: fixed", "url(x)", "var(--a);color:red", "rgb(0,0,0);", "red}",
+    "{red", "<b>", "red>", "\"red\"", "'red'", "rgb(0,0,0", "rgb(0,0,0))", "var(--a, url(x))", "color-mix(in srgb, url( x ), red)", "expression(alert(1))",
+    "red blue", "re", "", "   ", "rgb(0,0,0;background:red)", "var(--a;--b:1)", "color-mix(in srgb, red 40%, blue);x:(y)", "var(--a)/*", "rgb(0 0 0) !important", "\\72 ed", "javascript:alert(1)", "#12", "#xyz"]) {
+    assert.equal(chartSafeColor(color), undefined, color);
+  }
+  for (const value of [undefined, null, 7, {}, ["red"]]) assert.equal(chartSafeColor(value), undefined);
+  // The period colour falls back to the tone default instead of passing a hostile value on.
+  assert.equal(chartPeriodColor("warning", "red;background:url(x)"), chartPeriodColor("warning"));
+  assert.equal(chartPeriodColor("planned", "red;position:fixed"), chartPeriodColor("planned"));
+  assert.equal(chartPeriodColor("planned", "var(--car-colour)"), "var(--car-colour)");
+});
+
+test("chartPeriodText: the period label, the tone without one, and what a muted lane says", () => {
+  const lane = { id: "xc40", label: "XC40" };
+  assert.equal(chartPeriodText(lane, { label: "Charging", tone: "active" }), "XC40 Charging");
+  assert.equal(chartPeriodText(lane, { tone: "extra" }), "XC40 extra", "the tone stands in for a missing label");
+  assert.equal(chartPeriodText(lane, {}), "XC40 planned");
+  // A paused plan must not read as if the car were charging.
+  assert.equal(chartPeriodText({ ...lane, muted: true }, { label: "Charging", tone: "active" }), "XC40 Charging (paused)");
+  assert.equal(chartPeriodText({ ...lane, muted: true }, { tone: "active" }), "XC40 active (paused)");
+  assert.equal(chartPeriodText({ ...lane, muted: true, mutedLabel: "Paused" }, { label: "Charging" }), "XC40 Paused");
+  assert.equal(chartPeriodText({ ...lane, mutedLabel: "Paused" }, { label: "Charging" }), "XC40 Charging", "the muted label needs a muted lane");
+  assert.equal(chartPeriodText({ label: "" }, { label: "Charging" }), "Charging");
+});
+
+test("bands are clipped to the domain; the label shows only when the band is wide enough", () => {
+  const model = layoutPlan({
+    bands: [
+      { start: MIDNIGHT + 4 * HOUR, end: MIDNIGHT + 9 * HOUR, label: "no price yet" },  // 2 h = 99.8 px, label 62.4 + 8
+      { start: MIDNIGHT - HOUR, end: MIDNIGHT + HOUR, label: "no price yet", pattern: "tint" }, // 1 h = 49.9 px: too narrow
+      { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 3 * HOUR },
+      { start: MIDNIGHT + 7 * HOUR, end: MIDNIGHT + 8 * HOUR, label: "later" },          // outside
+      { start: MIDNIGHT + 3 * HOUR, end: MIDNIGHT + 3 * HOUR },                          // empty
+    ],
+  });
+  const { plot } = model;
+  assert.equal(model.bands.length, 3);
+  near(model.bands[0].x, model.x(MIDNIGHT + 4 * HOUR));
+  near(model.bands[0].x + model.bands[0].width, plot.right, "clipped at the domain end");
+  assert.deepEqual(model.bands[0].label, { x: model.bands[0].x + 4, y: plot.top + 8, text: "no price yet" });
+  near(model.bands[1].x, plot.left, "clipped at the domain start");
+  near(model.bands[1].width, model.x(MIDNIGHT + HOUR) - plot.left);
+  assert.equal(model.bands[1].label, undefined, "49.9 px does not fit a 62.4 px label plus 8 px");
+  assert.equal(model.bands[1].band.pattern, "tint");
+  assert.equal(model.bands[2].label, undefined, "no label asked for");
+  // Exactly label + 8 px wide is enough; a character more is not. The label's expected width
+  // counts (5.6 px per lowercase letter), not the wider reserve the axis labels use.
+  const width = (label) => estimateTextWidth(label, "typical") + CHART_LABEL_GAP_PX;
+  const hourPx = model.x(MIDNIGHT + HOUR) - model.x(MIDNIGHT);
+  const fit = "x".repeat(Math.floor((2 * hourPx - CHART_LABEL_GAP_PX) / 5.6));
+  assert.ok(estimateLabelWidth(fit) + CHART_LABEL_GAP_PX > 2 * hourPx, "the per-character estimate would have dropped it");
+  assert.ok(width(fit) <= 2 * hourPx && width(`${fit}x`) > 2 * hourPx);
+  const edge = (label) => layoutPlan({ bands: [{ start: MIDNIGHT, end: MIDNIGHT + 2 * HOUR, label }] }).bands[0].label;
+  assert.equal(edge(fit).text, fit);
+  assert.equal(edge(`${fit}x`), undefined);
+});
+
+test("markers span the plot inside the domain; the label goes to the side with more room", () => {
+  const model = layoutPlan({
+    markers: [
+      { t: MIDNIGHT + HOUR, label: "Cheap from", dash: true },
+      { t: MIDNIGHT + 5 * HOUR, label: "Day tariff", color: "tomato" },
+      { t: MIDNIGHT + 3 * HOUR },
+      { t: MIDNIGHT - 1, label: "before" },
+      { t: MIDNIGHT + 6 * HOUR + 1, label: "after" },
+      { t: Number.NaN },
+      { t: MIDNIGHT + 6 * HOUR, label: "End" },
+    ],
+  });
+  assert.equal(model.markers.length, 4, "markers outside the domain are not drawn");
+  const [left, right, bare, end] = model.markers;
+  near(left.x, model.x(MIDNIGHT + HOUR));
+  assert.deepEqual(left.label, { x: left.x + 4, y: CHART_MARGIN.top - 7, text: "Cheap from", anchor: "start" });
+  assert.equal(left.marker.dash, true);
+  near(right.x, model.x(MIDNIGHT + 5 * HOUR));
+  assert.deepEqual(right.label, { x: right.x - 4, y: CHART_MARGIN.top - 7, text: "Day tariff", anchor: "end" });
+  assert.equal(right.marker.color, "tomato");
+  assert.ok(right.label.y < model.plot.top - 5, "above the plot: clear of the bars and the H/L marks inside it");
+  near(bare.x, model.x(MIDNIGHT + 3 * HOUR));
+  assert.equal(bare.label, undefined);
+  near(end.x, model.plot.right, "the domain end is inside");
+  assert.equal(end.label.anchor, "end");
+});
+
+test("lanes, bands and markers never extend the domain", () => {
+  const extras = {
+    lanes: [{ id: "car", label: "Car", periods: [{ start: MIDNIGHT - 5 * HOUR, end: MIDNIGHT + 30 * HOUR }], marker: { t: MIDNIGHT + 40 * HOUR } }],
+    bands: [{ start: MIDNIGHT - 9 * HOUR, end: MIDNIGHT + 50 * HOUR }],
+    markers: [{ t: MIDNIGHT + 60 * HOUR }],
+  };
+  const model = layoutPlan({ domain: undefined, ...extras });
+  assert.deepEqual(model.x.domain, [MIDNIGHT, MIDNIGHT + 6 * HOUR], "the series data define it");
+  assert.deepEqual(model.x.domain, layoutPlan({ domain: undefined }).x.domain);
+  near(model.lanes[0].periods[0].x, model.plot.left);
+  near(model.lanes[0].periods[0].width, model.plot.right - model.plot.left);
+  assert.equal(model.lanes[0].marker, undefined);
+  near(model.bands[0].width, model.plot.right - model.plot.left);
+  assert.deepEqual(model.markers, []);
+});
+
+test("a marker label that does not fit over the plot beside its line is dropped", () => {
+  const label = (markers, width = 360) => layoutPlan({ markers }, { width }).markers.map((entry) => entry.label && `${entry.label.anchor}:${entry.label.text}`);
+  const model = layoutPlan();
+  const long = "Day tariff starts and the plan";
+  const width = estimateTextWidth(long);
+  // Near the left edge the label goes right, the side with more room, and fits there.
+  const early = layoutPlan({ markers: [{ t: MIDNIGHT + HOUR, label: long }] }).markers[0];
+  assert.equal(early.label.anchor, "start");
+  assert.ok(early.label.x + width <= model.plot.right);
+  // In the middle neither side has the room: the line stays, the label goes.
+  const middle = layoutPlan({ markers: [{ t: MIDNIGHT + 3.2 * HOUR, label: long }] }).markers[0];
+  assert.ok(middle.x - 4 - width < model.plot.left && middle.x + 4 + width > model.plot.right);
+  near(middle.x, model.x(MIDNIGHT + 3.2 * HOUR));
+  assert.equal(middle.label, undefined);
+  // A label stays over the plot: the gutters hold the top axis labels at almost the same height.
+  const atEnd = layoutPlan({ markers: [{ t: MIDNIGHT + 6 * HOUR, label: "End" }] }).markers[0];
+  assert.equal(atEnd.label.anchor, "end");
+  near(atEnd.label.x, model.plot.right - 4);
+  const gutter = layoutPlan({ markers: [{ t: MIDNIGHT + 5 * HOUR, label: "Day tariff" }, { t: MIDNIGHT + 5.9 * HOUR, label: "End of plan" }] }).markers[1];
+  assert.equal(gutter.label, undefined, "left it would run into the first label, right into the axis labels: dropped");
+  const atStart = layoutPlan({ markers: [{ t: MIDNIGHT, label: "Start" }] }).markers[0];
+  assert.deepEqual([atStart.label.anchor, atStart.label.x], ["start", model.plot.left + 4]);
+  // A narrow chart has no room for a long label at all.
+  assert.deepEqual(label([{ t: MIDNIGHT + HOUR, label: long }], 200), [undefined]);
+  assert.deepEqual(label([{ t: MIDNIGHT + HOUR, label: "Peak" }], 200), ["start:Peak"]);
+});
+
+test("marker labels are placed in time order and never closer than 8 px to one another", () => {
+  const first = { t: MIDNIGHT + 2 * HOUR, label: "Night tariff" };
+  const second = { t: MIDNIGHT + 2.2 * HOUR, label: "Cheapest" };
+  const third = { t: MIDNIGHT + 5.5 * HOUR, label: "Ready" };
+  // Given out of time order: the earlier marker still gets its label first.
+  const model = layoutPlan({ markers: [third, second, first] });
+  assert.deepEqual(model.markers.map((entry) => entry.marker), [third, second, first], "the caller's order is the draw order");
+  const [ready, cheapest, night] = model.markers;
+  assert.equal(night.label.anchor, "start");
+  assert.equal(ready.label.anchor, "end");
+  // "Cheapest" would start 10 px into "Night tariff" on the right, and has no room on the left
+  // of its line either (it would end 4 px before a label that starts 10 px earlier): dropped.
+  assert.equal(cheapest.label, undefined);
+  near(cheapest.x, model.x(second.t));
+  // A marker far enough away keeps its label: at least 8 px between the two.
+  const apart = layoutPlan({ markers: [first, { ...second, t: MIDNIGHT + 4 * HOUR }] }).markers;
+  const extent = ({ label }) => (label.anchor === "start" ? [label.x, label.x + estimateTextWidth(label.text)] : [label.x - estimateTextWidth(label.text), label.x]);
+  assert.ok(apart[1].label);
+  assert.ok(extent(apart[1])[0] - extent(apart[0])[1] >= CHART_LABEL_GAP_PX);
+  // The gap is 8 px, as between time labels: 4 px after an earlier label is too close, 8.5 px is not.
+  const base = layoutPlan();
+  const nightEnd = base.x(MIDNIGHT + HOUR) + 4 + estimateTextWidth("Night");
+  const close = (gap) => layoutPlan({ markers: [{ t: MIDNIGHT + HOUR, label: "Night" }, { t: base.x.invert(nightEnd + gap - 4), label: "Cheap" }] }).markers[1];
+  assert.equal(close(4).label, undefined, "4 px from the first label, and no room left of its own line");
+  assert.equal(close(7.5).label, undefined);
+  assert.equal(close(8.5).label.anchor, "start");
+  near(close(8.5).label.x, nightEnd + 8.5);
+  // A label that collides on its preferred side takes the other one when that is free.
+  const dodge = layoutPlan({ markers: [{ t: MIDNIGHT + 3.5 * HOUR, label: "Peak" }, { t: MIDNIGHT + 3.6 * HOUR, label: "Cut-off" }] }).markers;
+  assert.equal(dodge[0].label.anchor, "end", "past the middle: to the left");
+  assert.equal(dodge[1].label.anchor, "start", "to the right of its own line instead of over the first label");
+});
+
+test("lanes, bands and markers never extend the domain", () => {
+  const extras = {
+    lanes: [{ id: "car", label: "Car", periods: [{ start: MIDNIGHT - 5 * HOUR, end: MIDNIGHT + 30 * HOUR }], marker: { t: MIDNIGHT + 40 * HOUR } }],
+    bands: [{ start: MIDNIGHT - 9 * HOUR, end: MIDNIGHT + 50 * HOUR }],
+    markers: [{ t: MIDNIGHT + 60 * HOUR }],
+  };
+  const model = layoutPlan({ domain: undefined, ...extras });
+  assert.deepEqual(model.x.domain, [MIDNIGHT, MIDNIGHT + 6 * HOUR], "the series data define it");
+  assert.deepEqual(model.x.domain, layoutPlan({ domain: undefined }).x.domain);
+  near(model.lanes[0].periods[0].x, model.plot.left);
+  near(model.lanes[0].periods[0].width, model.plot.right - model.plot.left);
+  assert.equal(model.lanes[0].marker, undefined);
+  near(model.bands[0].width, model.plot.right - model.plot.left);
+  assert.deepEqual(model.markers, []);
+});
+
+/** Prices for the first six of ten hours: the plan runs four hours past the last published price. */
+const longPlan = (overrides = {}) => planChart({
+  domain: { start: MIDNIGHT, end: MIDNIGHT + 10 * HOUR },
+  lanes: [{
+    id: "xc40",
+    label: "XC40",
+    periods: [{ start: MIDNIGHT + 7 * HOUR, end: MIDNIGHT + 9 * HOUR, tone: "warning", label: "Not enough time" }],
+    marker: { t: MIDNIGHT + 9.5 * HOUR, label: "Ready by 09:30" },
+  }],
+  bands: [{ start: MIDNIGHT + 6 * HOUR, end: MIDNIGHT + 10 * HOUR, label: "no price yet" }],
+  ...overrides,
+});
+const layoutLong = (overrides, state = {}) =>
+  layoutTimeSeriesChart(longPlan(overrides), { width: 360, now: MIDNIGHT + 2.5 * HOUR, ...state });
+
+test("with lanes the selection walks interval slots across the whole domain, also where there is no value", () => {
+  const model = layoutLong();
+  assert.deepEqual(model.steps, Array.from({ length: 10 }, (_, hour) => MIDNIGHT + hour * HOUR), "six priced hours and four slots after them");
+  assert.equal(model.selectable.length, 6, "the series points are still listed");
+  assert.equal(model.intervalSelection, true);
+  // An hour after the last price: the cursor stands in its middle and the value is empty.
+  const late = layoutLong({}, { selectedT: MIDNIGHT + 8 * HOUR }).selection;
+  assert.equal(late.t, MIDNIGHT + 8 * HOUR);
+  assert.equal(late.index, 8);
+  assert.equal(late.followsNow, false);
+  near(late.x, model.x(MIDNIGHT + 8.5 * HOUR));
+  assert.deepEqual(late.values.map((value) => [value.series.id, value.point, value.y]), [["price", undefined, undefined]]);
+  assert.deepEqual(late.range, { start: MIDNIGHT + 8 * HOUR, end: MIDNIGHT + 9 * HOUR });
+  assert.equal(late.periods[0].period.label, "Not enough time", "the period in an hour without a price can be read");
+  // Any time inside a slot selects that slot.
+  const inside = layoutLong({}, { selectedT: MIDNIGHT + 8.7 * HOUR }).selection;
+  assert.deepEqual([inside.t, inside.index], [MIDNIGHT + 8 * HOUR, 8]);
+  // An hour with a price reads as before: the bar's interval, its value and the dot.
+  const priced = layoutLong({}, { selectedT: MIDNIGHT + 4 * HOUR }).selection;
+  assert.equal(priced.index, 4);
+  assert.equal(priced.values[0].point.v, 0.3);
+  near(priced.x, model.x(MIDNIGHT + 4.5 * HOUR));
+  assert.equal(priced.periods[0].period, undefined);
+  // The ends of the domain are the first and the last slot.
+  assert.equal(model.steps.at(-1), MIDNIGHT + 9 * HOUR);
+  assert.deepEqual(layoutLong({}, { selectedT: model.steps.at(-1) }).selection.range, { start: MIDNIGHT + 9 * HOUR, end: MIDNIGHT + 10 * HOUR });
+});
+
+test("interval slots fill gaps on the grid of the next point and keep every point selectable", () => {
+  const series = (hours) => [{ ...planChart().series[0], points: hours.map((hour) => ({ t: MIDNIGHT + hour * HOUR, v: 0.1 + hour / 100 })) }];
+  const steps = (hours, domainHours = [0, 6]) => layoutLong({
+    series: series(hours),
+    domain: { start: MIDNIGHT + domainHours[0] * HOUR, end: MIDNIGHT + domainHours[1] * HOUR },
+  }).steps.map((t) => (t - MIDNIGHT) / HOUR);
+  assert.deepEqual(steps([0, 1, 3, 4]), [0, 1, 2, 3, 4, 5], "a missing hour and the hour after the data are slots too");
+  assert.deepEqual(steps([2, 3]), [0, 1, 2, 3, 4, 5], "so are the hours before the first point");
+  // Half-hour phase: the gap before the first point ends on its grid, so the first slot is a short one.
+  assert.deepEqual(steps([1.5, 2.5]), [0, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5]);
+  // A first interval that began before the window is still the first step.
+  assert.deepEqual(steps([-0.5, 0.5, 1.5], [0, 3]), [-0.5, 0.5, 1.5, 2.5]);
+  const early = layoutLong({ series: series([-0.5, 0.5, 1.5]), domain: { start: MIDNIGHT, end: MIDNIGHT + 3 * HOUR } }, { selectedT: MIDNIGHT - 0.5 * HOUR }).selection;
+  assert.equal(early.index, 0);
+  assert.equal(early.values[0].point.t, MIDNIGHT - 0.5 * HOUR, "its value is read, not dropped as outside the window");
+  // The short first slot of a half-hour phase reads no value and ends where the first bar begins.
+  const short = layoutLong({ series: series([1.5, 2.5]), domain: { start: MIDNIGHT, end: MIDNIGHT + 6 * HOUR } }, { selectedT: MIDNIGHT + 0.6 * HOUR }).selection;
+  assert.deepEqual(short.range, { start: MIDNIGHT + 0.5 * HOUR, end: MIDNIGHT + 1.5 * HOUR });
+  assert.equal(short.values[0].point, undefined);
+  // An absurd interval for the window does not generate thousands of slots.
+  const tiny = layoutLong({ series: [{ ...planChart().series[0], intervalMs: 1000, points: [{ t: MIDNIGHT, v: 1 }, { t: MIDNIGHT + 1000, v: 2 }] }] });
+  assert.equal(tiny.steps.length, 2, "only the points");
+});
+
+test("following now on a chart with lanes reads the exact now, also in an hour without a value", () => {
+  // 02:30 with the 02:00 price missing: 1.7.0 snaps back to 01:00; with lanes the cursor stays on now.
+  const gap = { series: [{ ...planChart().series[0], points: [-0.05, 0.1, null, 0.25, 0.3, 0.2].map((v, hour) => ({ t: MIDNIGHT + hour * HOUR, v })) }] };
+  const without = layoutPlan(gap).selection;
+  assert.equal(without.t, MIDNIGHT + HOUR, "without lanes: the last hour with a price, as in 1.7.0");
+  const model = layoutLong(gap);
+  const now = model.selection;
+  assert.equal(now.followsNow, true);
+  assert.equal(now.t, MIDNIGHT + 2.5 * HOUR);
+  near(now.x, model.x(MIDNIGHT + 2.5 * HOUR));
+  assert.equal(now.index, 2);
+  assert.equal(now.values[0].point, undefined);
+  assert.deepEqual(now.range, { start: MIDNIGHT + 2.5 * HOUR, end: MIDNIGHT + 2.5 * HOUR }, "a single time, not the hour");
+  // With a price in that hour the value is read at now.
+  const priced = layoutLong().selection;
+  assert.equal(priced.t, MIDNIGHT + 2.5 * HOUR);
+  assert.equal(priced.values[0].point.v, 0.15);
+  // Now after the window: the last slot stands in; before it: the first.
+  const after = layoutLong({}, { now: MIDNIGHT + 48 * HOUR }).selection;
+  assert.deepEqual([after.index, after.t], [9, MIDNIGHT + 9 * HOUR]);
+  assert.equal(after.periods[0].period, undefined);
+  const before = layoutLong({}, { now: MIDNIGHT - 48 * HOUR }).selection;
+  assert.deepEqual([before.index, before.t], [0, MIDNIGHT]);
+  assert.equal(before.values[0].point.v, -0.05);
+  assert.equal(layoutLong({}, { now: MIDNIGHT + 48 * HOUR }).now, undefined);
+});
+
+test("a time picked outside the window by another chart of the group stops at the edge and reads nothing", () => {
+  const model = layoutLong({ lanes: [{ id: "xc40", label: "XC40", periods: [{ start: MIDNIGHT, end: MIDNIGHT + 40 * HOUR }] }] }, { selectedT: MIDNIGHT + 20 * HOUR });
+  const selection = model.selection;
+  assert.equal(selection.t, MIDNIGHT + 20 * HOUR);
+  near(selection.x, model.plot.right);
+  assert.equal(selection.index, 9);
+  assert.equal(selection.values[0].point, undefined);
+  assert.equal(selection.periods[0].period, undefined, "the drawn part of the period ends at the window");
+  const early = layoutLong({}, { selectedT: MIDNIGHT - 3 * HOUR }).selection;
+  assert.equal(early.index, 0);
+  near(early.x, model.plot.left);
+  assert.equal(early.values[0].point, undefined);
+});
+
+test("a line chart with lanes steps over samples, the time without samples, period boundaries and lane markers", () => {
+  const options = (overrides = {}) => planChart({
+    domain: { start: MIDNIGHT, end: MIDNIGHT + 8 * HOUR },
+    series: [
+      { id: "soc", label: "Charge", points: [20, 30, 40, 50].map((v, hour) => ({ t: MIDNIGHT + hour * HOUR, v })), format: String },
+      { id: "limit", label: "Limit", emphasis: "secondary", points: [{ t: MIDNIGHT, v: 80 }, { t: MIDNIGHT + 7 * HOUR, v: 90 }], format: String },
+    ],
+    axes: { primary: { format: String } },
+    lanes: [{
+      id: "xc40",
+      label: "XC40",
+      periods: [{ start: MIDNIGHT + 5 * HOUR + 20 * 60_000, end: MIDNIGHT + 6 * HOUR + 10 * 60_000, label: "Planned" }],
+      marker: { t: MIDNIGHT + 7.25 * HOUR, label: "Ready" },
+    }],
+    ...overrides,
+  });
+  const layout = (state = {}, overrides) => layoutTimeSeriesChart(options(overrides), { width: 360, now: MIDNIGHT + HOUR, ...state });
+  const hours = (model) => model.steps.map((t) => +((t - MIDNIGHT) / HOUR).toFixed(4));
+  const model = layout();
+  assert.equal(model.intervalSelection, false);
+  // Samples 0–3 h, hourly steps where there are none, the period's start and end, the lane marker, the domain end.
+  assert.deepEqual(hours(model), [0, 1, 2, 3, 4, 5, 5.3333, 6, 6.1667, 7, 7.25, 8]);
+  // A sample: value and dot as before.
+  const sample = layout({ selectedT: MIDNIGHT + 2 * HOUR }).selection;
+  assert.deepEqual([sample.t, sample.index, sample.values[0].point.v], [MIDNIGHT + 2 * HOUR, 2, 40]);
+  assert.deepEqual(sample.range, { start: sample.t, end: sample.t });
+  assert.equal(sample.periods[0].period, undefined);
+  // A time picks its nearest step; the period start is one, with no sample near it.
+  const start = layout({ selectedT: MIDNIGHT + 5.4 * HOUR }).selection;
+  assert.equal(start.t, MIDNIGHT + 5 * HOUR + 20 * 60_000);
+  assert.equal(start.index, 6);
+  near(start.x, model.x(start.t));
+  assert.equal(start.values[0].point, undefined, "three hours after the last sample is not that sample");
+  assert.equal(start.values[1].point, undefined, "nor the limit set at midnight");
+  assert.equal(start.periods[0].period.label, "Planned");
+  const end = layout({ selectedT: MIDNIGHT + 6 * HOUR + 10 * 60_000 }).selection;
+  assert.equal(end.periods[0].period, undefined, "the end is exclusive");
+  // The second series is read where it has a sample within half a step.
+  assert.equal(layout({ selectedT: MIDNIGHT + 7 * HOUR }).selection.values[1].point.v, 90);
+  assert.equal(layout({ selectedT: MIDNIGHT + 7 * HOUR }).selection.values[0].point, undefined);
+  // Following now picks the nearest step, as a line chart always did; the domain ends are steps.
+  assert.equal(layout({ now: MIDNIGHT + 1.2 * HOUR }).selection.t, MIDNIGHT + HOUR);
+  assert.equal(layout({ now: MIDNIGHT + 99 * HOUR }).selection.t, MIDNIGHT + 8 * HOUR);
+  assert.equal(layout({ now: MIDNIGHT - 99 * HOUR }).selection.t, MIDNIGHT);
+  // Samples with a hole: the hole is walked at the usual spacing.
+  const holed = layout({}, { series: [{ id: "soc", label: "Charge", points: [0, 1, 2, 6, 7, 8].map((hour) => ({ t: MIDNIGHT + hour * HOUR, v: hour })), format: String }], lanes: [{ id: "a", label: "A", periods: [] }] });
+  assert.deepEqual(hours(holed), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  // An explicit maxGapMs still decides how far a sample reaches.
+  const reach = layout({ selectedT: MIDNIGHT + 4 * HOUR }, { series: [{ ...options().series[0], maxGapMs: 4 * HOUR }] }).selection;
+  assert.equal(reach.values[0].point.v, 50, "within maxGapMs / 2 of the 03:00 sample");
+});
+
+test("selection.periods: a selected interval reads the period that overlaps it most; following now, the one at now", () => {
+  const charging = { start: MIDNIGHT + HOUR, end: MIDNIGHT + 3 * HOUR, tone: "active", label: "Charging" };
+  const later = { start: MIDNIGHT + 3 * HOUR, end: MIDNIGHT + 4 * HOUR, tone: "extra" };
+  const lanes = [
+    { id: "xc40", label: "XC40", periods: [charging, later] },
+    { id: "ex30", label: "EX30", periods: [{ start: MIDNIGHT + 5 * HOUR, end: MIDNIGHT + 6 * HOUR }] },
+  ];
+  const at = (selectedT, list = lanes) => layoutPlan({ lanes: list }, { selectedT }).selection.periods;
+  const inside = at(MIDNIGHT + 2 * HOUR);
+  assert.equal(inside.length, 2, "one entry per lane");
+  assert.equal(inside[0].lane, lanes[0]);
+  assert.equal(inside[0].period, charging);
+  assert.equal(inside[1].lane, lanes[1]);
+  assert.equal(inside[1].period, undefined, "EX30 has nothing at 02:00");
+  assert.equal(at(MIDNIGHT + HOUR)[0].period, charging, "the start is inclusive");
+  assert.equal(at(MIDNIGHT + 3 * HOUR)[0].period, later, "the end is exclusive: the next period takes over");
+  assert.equal(at(MIDNIGHT + 4 * HOUR)[0].period, undefined, "the end is exclusive");
+  assert.equal(at(MIDNIGHT)[0].period, undefined);
+  assert.equal(at(MIDNIGHT + 5 * HOUR)[1].period, lanes[1].periods[0]);
+  // Following now inside an interval selects now itself (02:30), which is inside the charging period.
+  const following = layoutPlan({ lanes }).selection;
+  assert.equal(following.followsNow, true);
+  assert.equal(following.t, MIDNIGHT + 2.5 * HOUR);
+  assert.equal(following.periods[0].period, charging);
+
+  // The cursor of a bar stands in the middle of its hour, so the hour is read as a whole: a
+  // period that starts at 02:15 belongs to the 02:00 bar, though it does not contain 02:00.
+  const quarter = { start: MIDNIGHT + 2.25 * HOUR, end: MIDNIGHT + 2.9 * HOUR, label: "Charging 02:15" };
+  const ended = { start: MIDNIGHT + 1.4 * HOUR, end: MIDNIGHT + 2.1 * HOUR, label: "Ended 02:06" };
+  assert.equal(at(MIDNIGHT + 2 * HOUR, [{ id: "a", label: "A", periods: [quarter] }])[0].period, quarter);
+  assert.equal(at(MIDNIGHT + 2 * HOUR, [{ id: "a", label: "A", periods: [ended, quarter] }])[0].period, quarter, "39 minutes of the hour beat 6");
+  assert.equal(at(MIDNIGHT + 2 * HOUR, [{ id: "a", label: "A", periods: [quarter, ended] }])[0].period, quarter, "whatever their order");
+  assert.equal(at(MIDNIGHT + HOUR, [{ id: "a", label: "A", periods: [ended, quarter] }])[0].period, ended);
+  // Two halves of the hour tie: the later one wins.
+  const firstHalf = { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 2.5 * HOUR, label: "first" };
+  const secondHalf = { start: MIDNIGHT + 2.5 * HOUR, end: MIDNIGHT + 3 * HOUR, label: "second" };
+  assert.equal(at(MIDNIGHT + 2 * HOUR, [{ id: "a", label: "A", periods: [firstHalf, secondHalf] }])[0].period, secondHalf);
+  // Following now reads the exact now instead: 02:30 is in the second half, 02:20 in the first.
+  const nowAt = (now) => layoutPlan({ lanes: [{ id: "a", label: "A", periods: [firstHalf, secondHalf] }] }, { now }).selection.periods[0].period;
+  assert.equal(nowAt(MIDNIGHT + 2.5 * HOUR), secondHalf);
+  assert.equal(nowAt(MIDNIGHT + 2 * HOUR + 20 * 60_000), firstHalf);
+});
+
+test("of overlapping periods the last one, drawn on top, is the one the selection reads", () => {
+  const under = { start: MIDNIGHT + HOUR, end: MIDNIGHT + 6 * HOUR, label: "under" };
+  const onTop = { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 4 * HOUR, tone: "warning", label: "on top" };
+  const read = (periods, state) => layoutPlan({ lanes: [{ id: "a", label: "A", periods }] }, state).selection.periods[0].period;
+  assert.equal(read([under, onTop], { selectedT: MIDNIGHT + 3 * HOUR }), onTop);
+  assert.equal(read([onTop, under], { selectedT: MIDNIGHT + 3 * HOUR }), under, "the order decides, as it does on screen");
+  assert.equal(read([under, onTop], { selectedT: MIDNIGHT + 5 * HOUR }), under);
+  // The same while following now (02:30).
+  assert.equal(read([under, onTop]), onTop);
+  assert.equal(read([onTop, under]), under);
+});
+
+test("a chart with only bands, lanes and markers is still empty, at the total height", () => {
+  const model = layoutPlan({
+    series: [{ ...planChart().series[0], points: [{ t: MIDNIGHT, v: null }] }],
+    lanes: [{ id: "car", label: "Car", periods: [{ start: MIDNIGHT, end: MIDNIGHT + HOUR }] }],
+    bands: [{ start: MIDNIGHT, end: MIDNIGHT + 6 * HOUR, label: "no price yet" }],
+    markers: [{ t: MIDNIGHT + HOUR }],
+  });
+  assert.equal(model.empty, true);
+  assert.equal(model.selection, undefined);
+  assert.deepEqual(model.lanes, []);
+  assert.deepEqual(model.bands, []);
+  assert.deepEqual(model.markers, []);
+  assert.equal(model.height, 190);
+  assert.equal(model.totalHeight, 218, "the empty state keeps the height the chart will have");
+  const bandsOnly = layoutPlan({ series: [], bands: [{ start: MIDNIGHT, end: MIDNIGHT + HOUR }] });
+  assert.equal(bandsOnly.empty, true, "a band is not data");
+  assert.equal(bandsOnly.totalHeight, 190);
 });
