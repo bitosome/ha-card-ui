@@ -938,6 +938,9 @@ test("a muted lane draws every period muted; tone helpers", () => {
   assert.match(chartPeriodColor("extra"), /^var\(--family-chart-period-extra, color-mix\(in srgb, var\(--family-chart-period-planned, .* 46%, transparent\)\)$/);
   assert.equal(chartPeriodColor("warning"), "var(--family-chart-period-warning, var(--family-warning, var(--warning-color, #ff9800)))");
   assert.equal(chartPeriodColor("muted"), "var(--family-chart-period-muted, color-mix(in srgb, var(--primary-text-color) 22%, transparent))");
+  // `done` is what already happened: the active colour at about half strength.
+  assert.equal(chartPeriodTone({}, { tone: "done" }), "done");
+  assert.equal(chartPeriodColor("done"), `var(--family-chart-period-done, color-mix(in srgb, ${chartPeriodColor("active")} 48%, transparent))`);
   assert.equal(chartPeriodColor("active", "teal"), "teal", "an explicit colour wins");
   assert.equal(chartPeriodColor(), chartPeriodColor("planned"));
 });

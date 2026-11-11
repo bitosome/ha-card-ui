@@ -14,6 +14,7 @@ import type { FormatHass } from "./format.js";
 import {
   CHART_LANE_PX,
   CHART_PERIOD_ACTIVE_PX,
+  CHART_PERIOD_DONE_PX,
   chartDefId,
   chartPeriodColor,
   chartPeriodText,
@@ -546,8 +547,8 @@ export class FamilyChartController implements ReactiveController {
         <rect class="family-chart-lane-track" x=${track.x} y=${track.y} width=${track.width} height=${track.height}
           rx=${track.height / 2}></rect>
         ${periods.map(({ period, tone, x, width: periodWidth }) => {
-          // `active` is 2 px taller than the track: it differs without colour or motion.
-          const periodHeight = tone === "active" ? CHART_PERIOD_ACTIVE_PX : track.height;
+          // `active` is 2 px taller than the track and `done` 4 px slimmer: they differ without colour or motion.
+          const periodHeight = tone === "active" ? CHART_PERIOD_ACTIVE_PX : tone === "done" ? CHART_PERIOD_DONE_PX : track.height;
           const periodY = track.y - (periodHeight - track.height) / 2;
           const rx = Math.min(periodHeight, periodWidth) / 2;
           const color = tone === "muted" ? undefined : chartSafeColor(period.color);
@@ -988,6 +989,12 @@ export const chartStyles = css`
     border-radius: 4px;
     border: 1px solid ${unsafeCSS(OUTLINE)};
   }
+  /* A done period is slimmer than the others, in the lanes and in its swatch. */
+  .family-chart-legend [data-period="done"] i.family-chart-period-swatch,
+  .family-chart-readout-period[data-tone="done"] .family-chart-period-swatch {
+    height: 5px;
+    border-radius: 2.5px;
+  }
   .family-chart-legend i.family-chart-band-swatch {
     border-radius: 2px;
     border-color: var(--family-chart-grid, color-mix(in srgb, var(--primary-text-color) 13%, transparent));
@@ -1225,6 +1232,9 @@ export const chartStyles = css`
   .family-chart-period[data-tone="active"] {
     fill: ${unsafeCSS(chartPeriodColor("active"))};
     animation: family-chart-period-pulse var(--family-chart-period-active-duration, 2.4s) ease-in-out infinite;
+  }
+  .family-chart-period[data-tone="done"] {
+    fill: ${unsafeCSS(chartPeriodColor("done"))};
   }
   .family-chart-period[data-tone="extra"] {
     fill: ${unsafeCSS(chartPeriodColor("extra"))};

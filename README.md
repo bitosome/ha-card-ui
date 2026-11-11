@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.9.0/bitosome-ha-card-ui-1.9.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.10.0/bitosome-ha-card-ui-1.10.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -234,7 +234,7 @@ Fullscreen keeps exactly the same row, button size and spacing. Only the insets 
 
 `levelMeter` also takes `role: "progressbar"` for task progress, and `--family-level-color` sets a card-owned fill colour (e.g. a printer status colour).
 
-### Time-series charts (1.7.0, periods in 1.8.0, interval bars and price colours in 1.9.0)
+### Time-series charts (1.7.0, periods in 1.8.0, interval bars and price colours in 1.9.0, the price chart in 1.10.0)
 
 One chart for sampled data over time, used by the weather forecast (Space Hub), the electricity price card and the printer power history. The weather and electricity charts are the visual reference. It is not a custom element: the card owns a `FamilyChartController` and places the templates in its own shadow root. Compose `chartStyles` after the family and component styles; it is a separate export, so cards without charts do not carry it.
 
@@ -272,6 +272,29 @@ colorAt: (point) => electricityPriceColor({ start: point.t, end: point.t + HOUR,
 
 The values are those of the Real Electricity Price card, which keeps its own copy until it moves to this helper.
 
+#### The electricity price chart (1.10.0)
+
+The price chart is the same on every card: today and tomorrow from midnight in the home time zone, one bar per hour in the price colours, H and L, and day-and-time labels. The Real Electricity Price card is the reference (it keeps its own copy of these helpers until it moves to them); a card that adds rows under the prices, such as charging periods, uses the same window, data and series. All of it is pure (`electricity-price.ts`, no Lit or DOM) and unit-tested.
+
+```ts
+const domain = electricityPriceDomain(hass, now);                      // home midnight, then 48 h
+const { points, missing, entityId } = electricityPricePoints(hass, { domain });
+const series = [electricityPriceSeries({ points, now, cheap: electricityPriceCheapLimit(hass), format: (v) => formatPrice(v) })];
+const view = this.charts.render({
+  id: "price", label: "Electricity price", height: 190, hass, domain, series, now,
+  axes: { primary: { includeZero: true, decimals: 2, format: (v) => formatAxisPrice(v) } },
+  tickStepsMs: ELECTRICITY_PRICE_TICK_STEPS_MS,
+  timeLabel: (t) => electricityPriceTimeLabel(hass, t),
+  lanes,                                                                // optional: periods under the prices
+});
+```
+
+- `ELECTRICITY_PRICE_ENTITIES` are the Real Electricity Price integration's entities (`yesterday`, `today`, `tomorrow` hourly price lists, `current`, `cheap`), the defaults of every card that reads prices. `electricityPricePoints(hass, {entities, domain, now})` reads the three lists' `hourly_prices` attribute (`electricityPriceSensorPoints(entity)` for one), keeps the hours that start inside the domain, one per start time, and returns `missing` (today's and tomorrow's entity ids that do not exist) and the `entityId` to open more-info for. A point's value is the price a household pays (`actual_price`, then `price`, `y`, `nord_pool_price`).
+- `electricityPriceDomain(hass, now)` is `homeMidnight(hass, now)` plus `ELECTRICITY_PRICE_CHART_HOURS` (48). The midnight follows the zone Home Assistant shows times in (`hassTimeZone`), also on the days the clocks change.
+- `electricityPriceSeries({points, now, format, cheap?, colors?, kind?, intervalMs?, extremes?, areaColor?})` is the series: `kind: "bar"` (or `"line"`), stepped, hourly, coloured by `electricityPriceColor`, with H and L unless `extremes: false`. The bars are the default narrow ones, centred in their hour.
+- `electricityPriceCheapLimit(hass, entityId?)` is the acceptable price of the price integration (or another number entity), the limit below which a price is green.
+- `ELECTRICITY_PRICE_TICK_STEPS_MS` (6, 8, 12, 16, 24 and 48 hours) and `electricityPriceTimeLabel(hass, t)` (day and time without the year, "11 Nov, 0:00") are the time axis.
+
 #### Periods, bands and markers (1.8.0)
 
 Three optional `TimeSeriesChartOptions` for plans and schedules on the chart's time scale (a charging plan under the price chart, heating schedules, robot runs, printer jobs). A chart that uses none of them renders exactly as in 1.7.0. None of them extends the domain or counts as data: a chart with only bands or lanes is still empty.
@@ -300,7 +323,7 @@ return chartFrame({ title: "Charging plan", readout: view.readout, body: view.sv
 ```
 
 - `lanes: ChartLane[]` (`{id, label, periods, marker?, muted?, mutedLabel?}`): rows of periods under the plot, below the time labels, on the plot's x scale. Each row is `CHART_LANE_PX` (22) with a 10 px outlined track and the periods as flat rounded fills on it (never narrower than 3 px, never wider than the plot); the first row starts `CHART_LANES_GAP_PX` (6) under the chart. A `ChartPeriod` is `{start, end, tone?, color?, label?}` in ms, clipped to the domain and dropped outside it or when `end <= start`. `marker: {t, label?}` is a short tick across that lane, e.g. a ready-by time. Lane ids must be unique within a chart (pattern ids and `data-lane` come from them). Periods of one lane should not overlap: the last one is drawn on top, and it is the one the selection reads.
-- Tones never rely on colour alone. Every period has a 1 px outline (`--family-chart-period-outline`, 3:1 or better against the chart background in light and dark themes). `planned` (default) is a plain fill; `active` pulses gently (2.4 s, static under reduced motion) and is 2 px taller than the track (`CHART_PERIOD_ACTIVE_PX`, 12); `extra` is lighter with a diagonal hatch; `warning` has upright bars; `muted` is grey. `color` overrides the tone colour. `muted: true` draws the whole lane in the muted tone without pattern or animation (plan paused) and changes what it reads: "{label} {mutedLabel}" when `mutedLabel` is set (pass it, localised), else "{label} {period.label} (paused)".
+- Tones never rely on colour alone. Every period has a 1 px outline (`--family-chart-period-outline`, 3:1 or better against the chart background in light and dark themes). `planned` (default) is a plain fill; `active` pulses gently (2.4 s, static under reduced motion) and is 2 px taller than the track (`CHART_PERIOD_ACTIVE_PX`, 12); `done` (1.10.0) is what already happened, e.g. the hours a car charged: the active colour at about half strength, still, and 4 px slimmer than the track (`CHART_PERIOD_DONE_PX`, 6), in the lane and in its swatch (`--family-chart-period-done`); `extra` is lighter with a diagonal hatch; `warning` has upright bars; `muted` is grey. `color` overrides the tone colour. `muted: true` draws the whole lane in the muted tone without pattern or animation (plan paused) and changes what it reads: "{label} {mutedLabel}" when `mutedLabel` is set (pass it, localised), else "{label} {period.label} (paused)".
 - Lane labels sit in the right axis gutter, in line with the axis labels. More than 8 characters are cut with an ellipsis (by grapheme, so an emoji or accented letter is never split), so labels should be unique within their first 7 characters: pass a short label ("XC40", not "Volvo XC40 Recharge"). The full label is the lane's `<title>`. The gutter is sized by character class (`estimateTextWidth`: capitals, CJK and emoji are wider than digits), also when the primary axis shows no labels; a label that still measures wider than its room is squeezed into it (`textLength`) instead of being clipped.
 - Height: the plot and `chartHeight(height)` do not change. The SVG, the empty state and the model's `totalHeight` grow by `lanes × 22 + 6`; `model.height` stays the plot-area height. Use `chartTotalHeight(height, lanes)` for card-size estimates, and pass `lanes` (the count) to `chartSkeleton` and `chartState`.
 - Period line: `view.periods` (`chartPeriodLine(model)`) is one line of fixed height under the chart with what each lane shows at the selected time ("XC40 Charging · EX30 Planned", each behind a swatch of its tone, a lane's marker as "XC40 Ready by 07:00"). It is there even when no lane has a period at that time and for an empty chart, and text that does not fit ends in an ellipsis, so the frame never changes height while scrubbing. Pass it as `chartFrame({below: view.periods})`; it is `nothing` without lanes. The head readout stays the 1.7.0 one (time and values); on a chart with lanes a missing value's dash takes the width of the series' widest value, so the head wraps the same way with and without a value. `chartReadout(model, {periods: true})` appends the lane items to the readout instead, for a card whose head has room for a readout that grows.

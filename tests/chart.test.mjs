@@ -754,6 +754,29 @@ test("periods carry their tone; active is taller, warning and extra are patterne
   host.remove();
 });
 
+test("a done period is slimmer than the track, plain and still", async () => {
+  const host = mountHost([plan({
+    lanes: [{ id: "xc40", label: "XC40", periods: [
+      { start: MIDNIGHT, end: MIDNIGHT + HOUR, tone: "done", label: "Charged" },
+      { start: MIDNIGHT + 2 * HOUR, end: MIDNIGHT + 3 * HOUR },
+    ] }],
+  })]);
+  await host.updateComplete;
+  const lane = slider(host).querySelector("g.family-chart-lane");
+  const [done, planned] = lane.querySelectorAll("rect.family-chart-period");
+  assert.equal(done.dataset.tone, "done");
+  assert.equal(Number(done.getAttribute("height")), 6);
+  assert.equal(Number(planned.getAttribute("height")), 10);
+  // Centred on the track: 2 px lower than a planned period.
+  assert.equal(Number(done.getAttribute("y")) - Number(planned.getAttribute("y")), 2);
+  assert.equal(done.getAttribute("rx"), "3");
+  assert.equal(lane.querySelector("rect.family-chart-period-hatch"), null);
+  const css = chartStyles.cssText;
+  assert.match(css, /\.family-chart-period\[data-tone="done"\]\s*\{\s*fill: var\(--family-chart-period-done, /);
+  assert.doesNotMatch(css, /\[data-tone="done"\][^}]*animation/);
+  host.remove();
+});
+
 test("pattern ids are unique per chart and lane, so charts can share a shadow root", async () => {
   const host = mountHost([plan({ id: "garage" }), plan({ id: "street" })]);
   await host.updateComplete;

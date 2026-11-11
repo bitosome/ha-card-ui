@@ -50,6 +50,8 @@ export const CHART_PERIOD_MIN_PX = 3;
 export const CHART_LANE_LABEL_CHARS = 8;
 /** Height of an `active` period: 2 px taller than the track, centred on it, so it differs without colour or motion. */
 export const CHART_PERIOD_ACTIVE_PX = 12;
+/** A `done` period is 4 px slimmer than the track: what already happened differs without colour. */
+export const CHART_PERIOD_DONE_PX = 6;
 /** Extra frame height of the period line under a chart with lanes (18 px line + 5 px gap), for card-size estimates. */
 export const CHART_PERIOD_LINE_PX = 23;
 
@@ -708,7 +710,8 @@ export interface ChartSeries<T = unknown> {
   format: (value: number) => string;
 }
 
-export type ChartPeriodTone = "planned" | "active" | "extra" | "warning" | "muted";
+/** `done` (1.10.0) is a period that already happened, e.g. the hours a car charged. */
+export type ChartPeriodTone = "planned" | "active" | "done" | "extra" | "warning" | "muted";
 
 /** A time range on a lane, e.g. one planned charging block. */
 export interface ChartPeriod {
@@ -911,9 +914,12 @@ export function chartSeriesColor(series: Pick<ChartSeries, "color" | "emphasis">
 }
 
 const PERIOD_PLANNED = `var(--family-chart-period-planned, color-mix(in srgb, ${SERIES_1} 75%, transparent))`;
+const PERIOD_ACTIVE = "var(--family-chart-period-active, var(--family-success, var(--success-color, #43a047)))";
 const PERIOD_COLORS: Record<ChartPeriodTone, string> = {
   planned: PERIOD_PLANNED,
-  active: "var(--family-chart-period-active, var(--family-success, var(--success-color, #43a047)))",
+  active: PERIOD_ACTIVE,
+  // What already happened: the active colour at about half strength, still and flat.
+  done: `var(--family-chart-period-done, color-mix(in srgb, ${PERIOD_ACTIVE} 48%, transparent))`,
   // 46 % of the planned colour (itself 75 %) is about 35 % of the series colour, and follows an overridden planned colour.
   extra: `var(--family-chart-period-extra, color-mix(in srgb, ${PERIOD_PLANNED} 46%, transparent))`,
   warning: "var(--family-chart-period-warning, var(--family-warning, var(--warning-color, #ff9800)))",
