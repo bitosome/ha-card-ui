@@ -15,7 +15,7 @@
     {
       "checkout": "smartevse-dual-charger-card",
       "repository": "bitosome/smartevse-dual-charger-card",
-      "interaction": "Plan/settings/details modal flow; plan chart with price bars and charging periods"
+      "interaction": "Plan/settings/details modal flow; plan chart with interval-wide price bars in the shared price colours and charging periods; level meter in the car tiles"
     },
     {
       "checkout": "currnet-monitor-card",

@@ -43,6 +43,8 @@ const {
   safeId,
   chartDefId,
   layoutTimeSeriesChart,
+  ELECTRICITY_PRICE_COLORS,
+  electricityPriceColor,
 } = await import("../dist/chart-geometry.js");
 const { formatHassDateTime, formatHassNumber } = await import("../dist/format.js");
 
@@ -345,6 +347,49 @@ test("paths: step coordinates, smooth through every point, area closed at the ba
   assert.equal(barRect(0, 40, 20, 50).width, 14);
   assert.equal(barRect(0, 1, 20, 50).width, 2);
   assert.equal(barRect(0, 10, 50, 50).height, 1);
+  // "interval": the bar fills its slot but for 1px on each side, whatever the slot width.
+  assert.deepEqual(barRect(100, 140, 20, 50, "interval"), { x: 101, y: 20, width: 38, height: 30 });
+  assert.deepEqual(barRect(0, 10, 20, 50, "interval"), { x: 1, y: 20, width: 8, height: 30 });
+  assert.deepEqual(barRect(0, 4, 20, 50, "interval"), { x: 0.5, y: 20, width: 3, height: 30 });
+  assert.equal(barRect(0, 0.5, 20, 50, "interval").width, 1);
+  assert.deepEqual(barRect(0, 40, 20, 50, "narrow"), barRect(0, 40, 20, 50));
+});
+
+test("barFit interval makes bars span their interval in the laid-out chart", () => {
+  const points = [0.1, 0.2, 0.3, 0.2].map((v, hour) => ({ t: MIDNIGHT + hour * HOUR, v }));
+  const options = (barFit) => priceOptions({
+    domain: { start: MIDNIGHT, end: MIDNIGHT + 4 * HOUR },
+    series: [priceSeries({ kind: "bar", points, ...(barFit ? { barFit } : {}) })],
+  });
+  const narrow = layoutTimeSeriesChart(options(), { width: 360, now: MIDNIGHT }).series[0].bars;
+  const wide = layoutTimeSeriesChart(options("interval"), { width: 360, now: MIDNIGHT }).series[0].bars;
+  assert.ok(narrow.every((bar) => bar.width === 14));
+  const slot = wide[1].x - wide[0].x;
+  assert.ok(slot > 40, `four hours on 360px: ${slot}`);
+  assert.ok(wide.every((bar) => Math.abs(bar.width - (slot - 2)) < 0.01), "each bar fills its hour but for 2px");
+  // Neighbouring bars leave a 2px gap: the edge of an hour is 1px from each bar.
+  assert.ok(Math.abs(wide[1].x - (wide[0].x + wide[0].width) - 2) < 0.01);
+});
+
+test("electricity price colours: past, current and future, green at or below the cheap limit", () => {
+  const now = MIDNIGHT + 2.5 * HOUR;
+  const at = (hour, value, extra = {}) => electricityPriceColor({ start: MIDNIGHT + hour * HOUR, end: MIDNIGHT + (hour + 1) * HOUR, now, value, ...extra });
+  assert.equal(at(1, 0.3), ELECTRICITY_PRICE_COLORS.past);
+  assert.equal(at(2, 0.3), ELECTRICITY_PRICE_COLORS.current);
+  assert.equal(at(3, 0.3), ELECTRICITY_PRICE_COLORS.future);
+  assert.equal(at(1, 0.1, { cheap: 0.1 }), ELECTRICITY_PRICE_COLORS.cheapPast);
+  assert.equal(at(2, 0.1, { cheap: 0.1 }), ELECTRICITY_PRICE_COLORS.cheapCurrent);
+  assert.equal(at(3, 0.05, { cheap: 0.1 }), ELECTRICITY_PRICE_COLORS.cheap);
+  assert.equal(at(3, 0.11, { cheap: 0.1 }), ELECTRICITY_PRICE_COLORS.future);
+  // No limit, or no price: never green. Negative prices are cheap under any limit above them.
+  assert.equal(at(3, 0.05, { cheap: null }), ELECTRICITY_PRICE_COLORS.future);
+  assert.equal(at(3, null, { cheap: 0.1 }), ELECTRICITY_PRICE_COLORS.future);
+  assert.equal(at(3, -0.02, { cheap: 0 }), ELECTRICITY_PRICE_COLORS.cheap);
+  assert.equal(at(3, 0.3, { colors: { future: "#123456" } }), "#123456");
+  assert.equal(at(2, 0.3, { colors: { future: "#123456" } }), ELECTRICITY_PRICE_COLORS.current);
+  // The end of an interval belongs to the next one.
+  assert.equal(electricityPriceColor({ start: now - HOUR, end: now, now, value: 0.3 }), ELECTRICITY_PRICE_COLORS.past);
+  assert.equal(electricityPriceColor({ start: now, end: now + HOUR, now, value: 0.3 }), ELECTRICITY_PRICE_COLORS.current);
 });
 
 test("extremes, indexAtTime, nearestIndex and keyboardIndex", () => {

@@ -518,15 +518,20 @@ export function areaPath(line: string, firstX: number, lastX: number, baseline: 
   return `${line} L ${xy(lastX, baseline)} L ${xy(firstX, baseline)} Z`;
 }
 
-/** A bar centred in its interval slot, growing up or down from `zeroY`. */
+/**
+ * A bar centred in its interval slot, growing up or down from `zeroY`. By default a bar is at
+ * most 14px wide. With `fit: "interval"` it fills its slot but for a 1px gap on each side, so
+ * its edges line up with anything else drawn on the same time scale (period lanes, bands).
+ */
 export function barRect(
   x0: number,
   x1: number,
   y: number,
   zeroY: number,
+  fit: "narrow" | "interval" = "narrow",
 ): { x: number; y: number; width: number; height: number } {
   const slot = Math.max(0, x1 - x0);
-  const width = clamp(slot * 0.9, 2, 14);
+  const width = fit === "interval" ? Math.max(1, slot - Math.min(2, slot * 0.25)) : clamp(slot * 0.9, 2, 14);
   return {
     x: x0 + Math.max(0, (slot - width) / 2),
     y: Math.min(y, zeroY),
@@ -678,6 +683,11 @@ export interface ChartSeries<T = unknown> {
   curve?: ChartCurve;
   /** Required for step and bar (layout throws without it): each point covers [t, t + intervalMs). */
   intervalMs?: number;
+  /**
+   * Bars only. `narrow` (default): at most 14px wide, centred in the interval. `interval`: the
+   * bar fills its interval, for charts that draw periods or bands under the same time scale.
+   */
+  barFit?: "narrow" | "interval";
   /** Linear and smooth lines break when neighbours are further apart. */
   maxGapMs?: number;
   /** `primary` is the right axis. */
@@ -1234,7 +1244,7 @@ export function layoutTimeSeriesChart<T>(
       const zeroY = y(clamp(0, y.domain[0], y.domain[1]));
       const fill = chartSeriesColor(series);
       entry.bars = finite.map((point) => ({
-        ...barRect(x0(point), x(intervalEnd(series, point)), plotY(y, point.v as number), zeroY),
+        ...barRect(x0(point), x(intervalEnd(series, point)), plotY(y, point.v as number), zeroY, series.barFit),
         point,
         fill: series.colorAt?.(point) || fill,
       }));
@@ -1531,4 +1541,36 @@ export function layoutTimeSeriesChart<T>(
     hasGaps,
     ...(steps ? { steps } : {}),
   };
+}
+
+/**
+ * Colours of an electricity price series, shared by every card that draws prices: an interval
+ * is past, current or still to come, and each of those is green when its price is at or below
+ * the cheap limit. Use as `colorAt: (point) => electricityPriceColor({ start: point.t, end:
+ * point.t + HOUR, value: point.v, now, cheap })`. `colors` overrides single entries.
+ */
+export const ELECTRICITY_PRICE_COLORS = {
+  future: "#93c5fd",
+  current: "#3b82f6",
+  past: "#bfdbfe",
+  cheap: "#86efac",
+  cheapCurrent: "#22c55e",
+  cheapPast: "#bbf7d0",
+} as const;
+export type ElectricityPriceColors = { [key in keyof typeof ELECTRICITY_PRICE_COLORS]: string };
+
+export function electricityPriceColor(options: {
+  start: number;
+  end: number;
+  now: number;
+  value: number | null | undefined;
+  /** Prices at or below this are cheap; omit when there is no limit. */
+  cheap?: number | null;
+  colors?: Partial<ElectricityPriceColors>;
+}): string {
+  const colors = { ...ELECTRICITY_PRICE_COLORS, ...(options.colors || {}) };
+  const isCheap = isValue(options.cheap) && isValue(options.value) && (options.value as number) <= (options.cheap as number);
+  if (options.now >= options.start && options.now < options.end) return isCheap ? colors.cheapCurrent : colors.current;
+  if (options.end <= options.now) return isCheap ? colors.cheapPast : colors.past;
+  return isCheap ? colors.cheap : colors.future;
 }
