@@ -58,6 +58,27 @@ test("missing values draw an empty track announced as unavailable; levels are cl
   assert.equal(fromMarkup(levelMeterMarkup({ value: -5, label: "Level" })).getAttribute("aria-valuenow"), "0");
 });
 
+test("a range is drawn hatched behind the fill, in both renderers", () => {
+  const options = { value: 35, label: "Battery", target: 80, range: { from: 80, to: 100 } };
+  for (const meter of [mount(levelMeter(options)), fromMarkup(levelMeterMarkup(options))]) {
+    const range = meter.querySelector(".family-level-range");
+    assert.equal(range.getAttribute("style").replace(/\s+/g, ""), "left:80%;width:20%");
+    // Before the fill in the markup, so the fill paints over it.
+    assert.equal(meter.firstElementChild, range);
+    assert.ok(meter.querySelector(".family-level-fill"));
+    assert.ok(meter.querySelector(".family-level-target"));
+  }
+  // Clamped to the track; an empty, reversed or missing range draws nothing.
+  const clamped = fromMarkup(levelMeterMarkup({ value: 10, label: "Battery", range: { from: -20, to: 140 } }));
+  assert.equal(clamped.querySelector(".family-level-range").getAttribute("style"), "left:0%;width:100%");
+  for (const range of [{ from: 80, to: 80 }, { from: 90, to: 70 }, { from: NaN, to: 100 }, null, undefined]) {
+    for (const meter of [mount(levelMeter({ value: 10, label: "Battery", range })), fromMarkup(levelMeterMarkup({ value: 10, label: "Battery", range }))]) {
+      assert.equal(meter.querySelector(".family-level-range"), null);
+    }
+  }
+  assert.match(componentStyles.cssText, /\.family-level-range\s*\{[^}]*repeating-linear-gradient/);
+});
+
 test("a 100 % target stays fully inside the track", () => {
   for (const meter of [mount(levelMeter({ value: 72, label: "Battery", target: 100 })), fromMarkup(levelMeterMarkup({ value: 72, label: "Battery", target: 100 }))]) {
     assert.match(meter.querySelector(".family-level-target").getAttribute("style"), /clamp\(1px, 100%, calc\(100% - 1px\)\)/);

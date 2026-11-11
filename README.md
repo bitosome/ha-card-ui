@@ -10,7 +10,7 @@ behavior; integrations continue to own physical actions, persistence and domain 
 Install the exact release tarball and commit the generated package lock:
 
 ```sh
-npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.10.0/bitosome-ha-card-ui-1.10.0.tgz
+npm install --save-exact https://github.com/bitosome/ha-card-ui/releases/download/v1.11.0/bitosome-ha-card-ui-1.11.0.tgz
 ```
 
 Lit 2 or 3 is a peer dependency. Import from `@bitosome/ha-card-ui` and bundle with
@@ -232,7 +232,7 @@ Camera Card and the printer camera share one overlay, taken 1:1 from Camera Card
 
 Fullscreen keeps exactly the same row, button size and spacing. Only the insets grow, to clear notches and the home indicator: add `family-media-fullscreen` to the frame (`:fullscreen` and `[data-media-fullscreen]` are covered automatically). Size buttons with `--family-media-button-size` and `--family-media-icon-size`.
 
-`levelMeter` also takes `role: "progressbar"` for task progress, and `--family-level-color` sets a card-owned fill colour (e.g. a printer status colour).
+`levelMeter` takes `range: {from, to}` (1.11.0) for a hatched part of the track behind the fill, e.g. from a charge minimum to the car's own limit: what may still be charged. `levelMeter` also takes `role: "progressbar"` for task progress, and `--family-level-color` sets a card-owned fill colour (e.g. a printer status colour).
 
 ### Time-series charts (1.7.0, periods in 1.8.0, interval bars and price colours in 1.9.0, the price chart in 1.10.0)
 
